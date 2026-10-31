@@ -37,6 +37,8 @@
   #chart{position:absolute;inset:0}
   #plabels{position:absolute;inset:0;pointer-events:none;z-index:3}
   .plab{position:absolute;right:0;font-size:11px;color:var(--mut);background:#0f1419cc;padding:1px 6px;border-radius:4px;white-space:nowrap}
+  #plegend{position:absolute;left:6px;top:4px;z-index:3;pointer-events:none;display:flex;gap:8px;flex-wrap:wrap;max-width:75%;font-size:10px;color:var(--mut);background:#0f1419b3;padding:2px 6px;border-radius:4px}
+  #plegend i{display:inline-block;width:12px;height:0;border-top:2px solid;vertical-align:middle;margin-right:3px}
   .empty{color:var(--mut);text-align:center;padding:40px 0}
 </style>
 </head>
@@ -59,7 +61,8 @@
 <div id="view">
   <div id="vbar"><button id="back">‹ Voltar</button><span id="vt"></span><button id="prev">←</button><button id="next">→</button></div>
   <div id="vinfo"></div>
-  <div id="cwrap"><div id="chart"></div><div id="plabels"></div></div>
+  <div id="cwrap"><div id="chart"></div><div id="plabels"></div>
+    <div id="plegend"><span><i style="border-color:#4da3ff"></i>MA9</span><span><i style="border-color:#f06292"></i>SMA20</span><span><i style="border-color:#ffa726"></i>EMA50</span><span><i style="border-color:#e6edf3"></i>EMA200</span><span><i style="border-color:#5b6773;border-top-style:dashed"></i>Bollinger</span></div></div>
 </div>
 
 <script>
@@ -137,7 +140,7 @@ function draw(d){
   band(d.bbl,'#0f1419','#0f1419');
   const cs = chart.addSeries(L.CandlestickSeries,{upColor:'#26a69a',downColor:'#ef5350',borderVisible:false,wickUpColor:'#26a69a',wickDownColor:'#ef5350'},0);
   cs.setData(d.t.map((t,i)=>({time:t,open:d.o[i],high:d.h[i],low:d.l[i],close:d.c[i]})));
-  line(d.ma9,'#4da3ff',0); line(d.ema50,'#ffa726',0); line(d.ema200,'#e6edf3',0,{lineWidth:2});
+  line(d.ma9,'#4da3ff',0); line(d.ema50,'#ffa726',0); line(d.ema200,'#e6edf3',0);
   line(d.sma20,'#f06292',0); line(d.bbu,'#5b6773',0,{lineStyle:2}); line(d.bbl,'#5b6773',0,{lineStyle:2});
   // pane 1: volume
   const vs = chart.addSeries(L.HistogramSeries,{priceFormat:{type:'volume'},priceLineVisible:false,lastValueVisible:false},1);
