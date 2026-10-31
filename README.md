@@ -37,4 +37,4 @@ python -m http.server -d docs 8000 # abra http://localhost:8000
 - **Tickers**: edite `tickers.txt` (sem `.SA`; duplicatas são ignoradas).
 - **Janela de liquidez / candles exibidos**: constantes no topo de `scripts/build.py`.
 - **Horário da atualização**: `cron` em `.github/workflows/update.yml` (em UTC).
-- **Filtros** (RSI, cruzamento de médias, acima da EMA200): objeto `PRED` em `docs/index.html`.
+- **Filtros** (RSI, EMA200, MA9 x SMA20, SMA20 x EMA50): objeto `PRED` em `docs/index.html`. Janela dos cruzamentos: `CROSS_DAYS` em `scripts/build.py` (padrão 3 pregões).
