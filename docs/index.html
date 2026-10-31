@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1419">
+<title>Gráficos de Ações B3</title>
+<script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root{--bg:#0f1419;--card:#18202a;--line:#2a3441;--tx:#e6edf3;--mut:#8b98a5;--up:#26a69a;--dn:#ef5350;--acc:#4da3ff}
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{margin:0;background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding-bottom:env(safe-area-inset-bottom)}
+  header{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line);padding:10px 12px}
+  h1{font-size:16px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:baseline}
+  h1 small{font-weight:400;color:var(--mut);font-size:12px}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  input,select{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:9px 10px;font-size:16px;min-width:0}
+  input{flex:1 1 120px}
+  .chips{display:flex;gap:6px;overflow-x:auto;margin-top:8px;padding-bottom:2px}
+  .chip{white-space:nowrap;background:var(--card);border:1px solid var(--line);color:var(--mut);border-radius:999px;padding:6px 12px;font-size:13px;cursor:pointer}
+  .chip.on{color:var(--tx);border-color:var(--acc);background:#16314d}
+  #list{padding:6px 8px 40px}
+  .item{display:grid;grid-template-columns:34px 1fr auto;gap:8px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;margin:6px 0;cursor:pointer}
+  .item:active{background:#1d2937}
+  .rk{color:var(--mut);font-size:12px;text-align:center}
+  .tk{font-weight:600}.sub{color:var(--mut);font-size:12px}
+  .px{text-align:right}.up{color:var(--up)}.dn{color:var(--dn)}
+  .tag{font-size:11px;padding:1px 6px;border-radius:6px;border:1px solid var(--line);margin-left:4px;color:var(--mut)}
+  #view{position:fixed;inset:0;background:var(--bg);z-index:10;display:none;flex-direction:column}
+  #view.show{display:flex}
+  #vbar{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);padding-top:max(8px,env(safe-area-inset-top))}
+  #vbar button{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:15px}
+  #vt{flex:1;font-weight:600}
+  #vinfo{display:flex;gap:12px;overflow-x:auto;padding:6px 12px;font-size:12px;color:var(--mut);border-bottom:1px solid var(--line);white-space:nowrap}
+  #vinfo b{color:var(--tx);font-weight:600}
+  #chart{flex:1;min-height:0}
+  .empty{color:var(--mut);text-align:center;padding:40px 0}
+</style>
+</head>
+<body>
+<header>
+  <h1>Ações B3 <small id="upd"></small></h1>
+  <div class="row">
+    <input id="q" placeholder="Buscar ticker (ex: PETR4)" autocapitalize="characters" autocomplete="off">
+    <select id="ord">
+      <option value="rank">Liquidez</option>
+      <option value="chg">Variação do dia</option>
+      <option value="rsi">RSI (menor)</option>
+      <option value="t">A–Z</option>
+    </select>
+  </div>
+  <div class="chips" id="chips"></div>
+</header>
+<div id="list"></div>
+
+<div id="view">
+  <div id="vbar"><button id="back">‹ Voltar</button><span id="vt"></span><button id="prev">←</button><button id="next">→</button></div>
+  <div id="vinfo"></div>
+  <div id="chart"></div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let ITEMS = [], shown = [], filter = 'all', chart = null, curIdx = -1;
+
+const FILTERS = [
+  ['all','Todos'],['top50','Top 50 liquidez'],['top200','Top 200'],
+  ['rsiLow','RSI < 35'],['rsiHigh','RSI > 70'],['up200','Acima EMA200'],
+  ['crossUp','Cruz. MA9↑SMA20'],['crossDn','Cruz. MA9↓SMA20']
+];
+const PRED = {
+  all:()=>true, top50:x=>x.rank<=50, top200:x=>x.rank<=200,
+  rsiLow:x=>x.rsi!=null&&x.rsi<35, rsiHigh:x=>x.rsi!=null&&x.rsi>70,
+  up200:x=>x.above200===true, crossUp:x=>x.cross===1, crossDn:x=>x.cross===-1
+};
+
+function fmtMoney(v){ if(v>=1e9) return (v/1e9).toFixed(2)+' bi'; if(v>=1e6) return (v/1e6).toFixed(1)+' mi'; return Math.round(v/1e3)+' mil'; }
+
+function render(){
+  const q = $('#q').value.trim().toUpperCase(), ord = $('#ord').value;
+  shown = ITEMS.filter(PRED[filter]).filter(x => !q || x.t.includes(q));
+  shown.sort((a,b)=> ord==='t' ? a.t.localeCompare(b.t)
+    : ord==='rank' ? a.rank-b.rank
+    : ord==='chg' ? (b.chg??-1e9)-(a.chg??-1e9)
+    : (a.rsi??1e9)-(b.rsi??1e9));
+  $('#list').innerHTML = shown.length ? shown.map((x,i)=>`
+    <div class="item" data-i="${i}">
+      <div class="rk">#${x.rank}</div>
+      <div><span class="tk">${x.t}</span>${x.cross===1?'<span class="tag up">cruz↑</span>':''}${x.cross===-1?'<span class="tag dn">cruz↓</span>':''}
+        <div class="sub">RSI ${x.rsi??'–'} · Liq ${fmtMoney(x.liq)}</div></div>
+      <div class="px">R$ ${x.close?.toFixed(2)??'–'}<div class="${x.chg>=0?'up':'dn'}">${x.chg>=0?'+':''}${x.chg??'–'}%</div></div>
+    </div>`).join('') : '<div class="empty">Nenhum ativo encontrado</div>';
+}
+
+function buildChips(){
+  $('#chips').innerHTML = FILTERS.map(([k,l])=>`<div class="chip ${k===filter?'on':''}" data-k="${k}">${l}</div>`).join('');
+}
+
+async function openTicker(i){
+  curIdx = i; const it = shown[i]; if(!it) return;
+  $('#view').classList.add('show'); $('#vt').textContent = it.t;
+  $('#vinfo').innerHTML = `<span>Rank <b>#${it.rank}</b></span><span>R$ <b>${it.close}</b></span><span>RSI <b>${it.rsi??'–'}</b></span><span>MACD <b>${it.macd??'–'}</b></span><span>Liq <b>${fmtMoney(it.liq)}</b></span><span>${it.date}</span>`;
+  const d = await (await fetch(`data/${it.t}.json`)).json();
+  draw(d);
+}
+
+function draw(d){
+  if(chart){ chart.remove(); chart = null; }
+  const L = LightweightCharts;
+  chart = L.createChart($('#chart'), {
+    autoSize:true,
+    layout:{background:{color:'#0f1419'},textColor:'#8b98a5',panes:{separatorColor:'#2a3441'}},
+    grid:{vertLines:{color:'#1a222c'},horzLines:{color:'#1a222c'}},
+    rightPriceScale:{borderColor:'#2a3441'}, timeScale:{borderColor:'#2a3441',rightOffset:3},
+    crosshair:{mode:L.CrosshairMode.Normal}
+  });
+  const line = (arr,color,pane,opts={}) => {
+    const s = chart.addSeries(L.LineSeries,{color,lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false,...opts},pane);
+    s.setData(d.t.map((t,i)=>arr[i]==null?{time:t}:{time:t,value:arr[i]})); return s;
+  };
+  // pane 0: preço
+  const cs = chart.addSeries(L.CandlestickSeries,{upColor:'#26a69a',downColor:'#ef5350',borderVisible:false,wickUpColor:'#26a69a',wickDownColor:'#ef5350'},0);
+  cs.setData(d.t.map((t,i)=>({time:t,open:d.o[i],high:d.h[i],low:d.l[i],close:d.c[i]})));
+  line(d.ma9,'#4da3ff',0); line(d.ema50,'#ffa726',0); line(d.ema200,'#e6edf3',0,{lineWidth:2});
+  line(d.sma20,'#8b98a5',0,{lineStyle:2}); line(d.bbu,'#5b6773',0,{lineStyle:2}); line(d.bbl,'#5b6773',0,{lineStyle:2});
+  // pane 1: volume
+  const vs = chart.addSeries(L.HistogramSeries,{priceFormat:{type:'volume'},priceLineVisible:false,lastValueVisible:false},1);
+  vs.setData(d.t.map((t,i)=>({time:t,value:d.v[i],color:i>0&&d.c[i]>=d.c[i-1]?'#26a69a99':'#ef535099'})));
+  // pane 2: MACD
+  const hs = chart.addSeries(L.HistogramSeries,{priceLineVisible:false,lastValueVisible:false},2);
+  hs.setData(d.t.map((t,i)=>d.hist[i]==null?{time:t}:{time:t,value:d.hist[i],color:d.hist[i]>=0?'#26a69a99':'#ef535099'}));
+  line(d.macd,'#4da3ff',2); line(d.sig,'#ffa726',2);
+  // pane 3: RSI
+  const rs = line(d.rsi,'#b388ff',3,{lastValueVisible:true});
+  rs.createPriceLine({price:70,color:'#26a69a',lineStyle:2,lineWidth:1,axisLabelVisible:false});
+  rs.createPriceLine({price:30,color:'#ef5350',lineStyle:2,lineWidth:1,axisLabelVisible:false});
+  // pane 4: Estocástico lento
+  const k = line(d.stk,'#4da3ff',4); line(d.std,'#ef5350',4);
+  k.createPriceLine({price:80,color:'#26a69a',lineStyle:2,lineWidth:1,axisLabelVisible:false});
+  k.createPriceLine({price:20,color:'#ef5350',lineStyle:2,lineWidth:1,axisLabelVisible:false});
+  // pane 5: ATR
+  line(d.atr,'#4da3ff',5,{lastValueVisible:true});
+  // proporções dos painéis
+  const ps = chart.panes(); const f=[6,1.2,1.5,1.5,1.5,1.2];
+  ps.forEach((p,i)=>p.setStretchFactor?.(f[i]));
+  chart.timeScale().setVisibleLogicalRange({from:d.t.length-90,to:d.t.length+3});
+}
+
+$('#list').addEventListener('click',e=>{ const el=e.target.closest('.item'); if(el) openTicker(+el.dataset.i); });
+$('#chips').addEventListener('click',e=>{ const c=e.target.closest('.chip'); if(!c) return; filter=c.dataset.k; buildChips(); render(); });
+$('#q').addEventListener('input',render); $('#ord').addEventListener('change',render);
+$('#back').onclick=()=>{ $('#view').classList.remove('show'); if(chart){chart.remove();chart=null;} };
+$('#prev').onclick=()=>openTicker(Math.max(0,curIdx-1));
+$('#next').onclick=()=>openTicker(Math.min(shown.length-1,curIdx+1));
+
+(async()=>{
+  try{
+    const r = await (await fetch('data/index.json',{cache:'no-cache'})).json();
+    ITEMS = r.items;
+    $('#upd').textContent = 'Atualizado ' + new Date(r.updated).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}) + ' · ' + r.count + ' ativos';
+    buildChips(); render();
+  }catch(e){ $('#list').innerHTML='<div class="empty">Dados ainda não gerados. Rode o workflow no GitHub.</div>'; }
+})();
+</script>
+</body>
+</html>
