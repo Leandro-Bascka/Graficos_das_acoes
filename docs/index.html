@@ -33,7 +33,10 @@
   #vt{flex:1;font-weight:600}
   #vinfo{display:flex;gap:12px;overflow-x:auto;padding:6px 12px;font-size:12px;color:var(--mut);border-bottom:1px solid var(--line);white-space:nowrap}
   #vinfo b{color:var(--tx);font-weight:600}
-  #chart{flex:1;min-height:0}
+  #cwrap{position:relative;flex:1;min-height:0}
+  #chart{position:absolute;inset:0}
+  #plabels{position:absolute;inset:0;pointer-events:none;z-index:3}
+  .plab{position:absolute;right:0;font-size:11px;color:var(--mut);background:#0f1419cc;padding:1px 6px;border-radius:4px;white-space:nowrap}
   .empty{color:var(--mut);text-align:center;padding:40px 0}
 </style>
 </head>
@@ -56,7 +59,7 @@
 <div id="view">
   <div id="vbar"><button id="back">‹ Voltar</button><span id="vt"></span><button id="prev">←</button><button id="next">→</button></div>
   <div id="vinfo"></div>
-  <div id="chart"></div>
+  <div id="cwrap"><div id="chart"></div><div id="plabels"></div></div>
 </div>
 
 <script>
@@ -66,12 +69,17 @@ let ITEMS = [], shown = [], filter = 'all', chart = null, curIdx = -1;
 const FILTERS = [
   ['all','Todos'],['top50','Top 50 liquidez'],['top200','Top 200'],
   ['rsiLow','RSI < 35'],['rsiHigh','RSI > 70'],['up200','Acima EMA200'],
-  ['crossUp','Cruz. MA9↑SMA20'],['crossDn','Cruz. MA9↓SMA20']
+  ['m9gt20','MA9 acima da SMA20'],
+  ['crossUp','Cruz. MA9↑SMA20 ({d}d)'],['crossDn','Cruz. MA9↓SMA20 ({d}d)'],
+  ['c2050Up','Cruz. SMA20↑EMA50 ({d}d)'],['c2050Dn','Cruz. SMA20↓EMA50 ({d}d)']
 ];
+let CD = 3; // janela de cruzamento em pregões (vem do index.json)
 const PRED = {
   all:()=>true, top50:x=>x.rank<=50, top200:x=>x.rank<=200,
   rsiLow:x=>x.rsi!=null&&x.rsi<35, rsiHigh:x=>x.rsi!=null&&x.rsi>70,
-  up200:x=>x.above200===true, crossUp:x=>x.cross===1, crossDn:x=>x.cross===-1
+  up200:x=>x.above200===true, m9gt20:x=>x.m9gt20===true,
+  crossUp:x=>x.cross===1, crossDn:x=>x.cross===-1,
+  c2050Up:x=>x.c2050===1, c2050Dn:x=>x.c2050===-1
 };
 
 function fmtMoney(v){ if(v>=1e9) return (v/1e9).toFixed(2)+' bi'; if(v>=1e6) return (v/1e6).toFixed(1)+' mi'; return Math.round(v/1e3)+' mil'; }
@@ -86,14 +94,14 @@ function render(){
   $('#list').innerHTML = shown.length ? shown.map((x,i)=>`
     <div class="item" data-i="${i}">
       <div class="rk">#${x.rank}</div>
-      <div><span class="tk">${x.t}</span>${x.cross===1?'<span class="tag up">cruz↑</span>':''}${x.cross===-1?'<span class="tag dn">cruz↓</span>':''}
+      <div><span class="tk">${x.t}</span>${x.cross===1?'<span class="tag up">9↑20</span>':''}${x.cross===-1?'<span class="tag dn">9↓20</span>':''}${x.c2050===1?'<span class="tag up">20↑50</span>':''}${x.c2050===-1?'<span class="tag dn">20↓50</span>':''}
         <div class="sub">RSI ${x.rsi??'–'} · Liq ${fmtMoney(x.liq)}</div></div>
       <div class="px">R$ ${x.close?.toFixed(2)??'–'}<div class="${x.chg>=0?'up':'dn'}">${x.chg>=0?'+':''}${x.chg??'–'}%</div></div>
     </div>`).join('') : '<div class="empty">Nenhum ativo encontrado</div>';
 }
 
 function buildChips(){
-  $('#chips').innerHTML = FILTERS.map(([k,l])=>`<div class="chip ${k===filter?'on':''}" data-k="${k}">${l}</div>`).join('');
+  $('#chips').innerHTML = FILTERS.map(([k,l])=>`<div class="chip ${k===filter?'on':''}" data-k="${k}">${l.replace('{d}',CD)}</div>`).join('');
 }
 
 async function openTicker(i){
@@ -119,10 +127,18 @@ function draw(d){
     s.setData(d.t.map((t,i)=>arr[i]==null?{time:t}:{time:t,value:arr[i]})); return s;
   };
   // pane 0: preço
+  // preenchimento da banda de Bollinger (azul ~80% transparente): área sob a banda superior em azul,
+  // coberta por uma área na cor do fundo sob a banda inferior. Vêm antes dos candles para ficar atrás.
+  const band = (arr,top,bottom) => {
+    const s = chart.addSeries(L.AreaSeries,{lineVisible:false,topColor:top,bottomColor:bottom,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false},0);
+    s.setData(d.t.map((t,i)=>arr[i]==null?{time:t}:{time:t,value:arr[i]}));
+  };
+  band(d.bbu,'rgba(77,163,255,0.2)','rgba(77,163,255,0.2)');
+  band(d.bbl,'#0f1419','#0f1419');
   const cs = chart.addSeries(L.CandlestickSeries,{upColor:'#26a69a',downColor:'#ef5350',borderVisible:false,wickUpColor:'#26a69a',wickDownColor:'#ef5350'},0);
   cs.setData(d.t.map((t,i)=>({time:t,open:d.o[i],high:d.h[i],low:d.l[i],close:d.c[i]})));
   line(d.ma9,'#4da3ff',0); line(d.ema50,'#ffa726',0); line(d.ema200,'#e6edf3',0,{lineWidth:2});
-  line(d.sma20,'#8b98a5',0,{lineStyle:2}); line(d.bbu,'#5b6773',0,{lineStyle:2}); line(d.bbl,'#5b6773',0,{lineStyle:2});
+  line(d.sma20,'#f06292',0); line(d.bbu,'#5b6773',0,{lineStyle:2}); line(d.bbl,'#5b6773',0,{lineStyle:2});
   // pane 1: volume
   const vs = chart.addSeries(L.HistogramSeries,{priceFormat:{type:'volume'},priceLineVisible:false,lastValueVisible:false},1);
   vs.setData(d.t.map((t,i)=>({time:t,value:d.v[i],color:i>0&&d.c[i]>=d.c[i-1]?'#26a69a99':'#ef535099'})));
@@ -144,19 +160,40 @@ function draw(d){
   const ps = chart.panes(); const f=[6,1.2,1.5,1.5,1.5,1.2];
   ps.forEach((p,i)=>p.setStretchFactor?.(f[i]));
   chart.timeScale().setVisibleLogicalRange({from:d.t.length-90,to:d.t.length+3});
+  setTimeout(placeLabels,80);
 }
+
+// legenda de cada indicador, no canto inferior direito do respectivo painel
+const PLABELS = [null,
+  'Volume',
+  '<span style="color:#4da3ff">MACD (12,26,9)</span> · <span style="color:#ffa726">Sinal</span> · Histograma',
+  '<span style="color:#b388ff">RSI (14)</span>',
+  'Estocástico lento · <span style="color:#4da3ff">%K (5)</span> · <span style="color:#ef5350">%D (3)</span>',
+  '<span style="color:#4da3ff">ATR (14)</span>'];
+function placeLabels(){
+  const box = $('#plabels'); if(!chart || !box) return;
+  let w = 60; try{ w = chart.priceScale('right').width() || 60; }catch(e){}
+  let y = 0, html = '';
+  chart.panes().forEach((p,i)=>{
+    const h = p.getHeight();
+    if(PLABELS[i]) html += `<div class="plab" style="top:${y+h-22}px;right:${w+6}px">${PLABELS[i]}</div>`;
+    y += h + 1;
+  });
+  box.innerHTML = html;
+}
+new ResizeObserver(()=>placeLabels()).observe($('#cwrap'));
 
 $('#list').addEventListener('click',e=>{ const el=e.target.closest('.item'); if(el) openTicker(+el.dataset.i); });
 $('#chips').addEventListener('click',e=>{ const c=e.target.closest('.chip'); if(!c) return; filter=c.dataset.k; buildChips(); render(); });
 $('#q').addEventListener('input',render); $('#ord').addEventListener('change',render);
-$('#back').onclick=()=>{ $('#view').classList.remove('show'); if(chart){chart.remove();chart=null;} };
+$('#back').onclick=()=>{ $('#view').classList.remove('show'); if(chart){chart.remove();chart=null;} $('#plabels').innerHTML=''; };
 $('#prev').onclick=()=>openTicker(Math.max(0,curIdx-1));
 $('#next').onclick=()=>openTicker(Math.min(shown.length-1,curIdx+1));
 
 (async()=>{
   try{
     const r = await (await fetch('data/index.json',{cache:'no-cache'})).json();
-    ITEMS = r.items;
+    ITEMS = r.items; CD = r.cross_days || 3;
     $('#upd').textContent = 'Atualizado ' + new Date(r.updated).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}) + ' · ' + r.count + ' ativos';
     buildChips(); render();
   }catch(e){ $('#list').innerHTML='<div class="empty">Dados ainda não gerados. Rode o workflow no GitHub.</div>'; }
