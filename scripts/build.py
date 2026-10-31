@@ -20,6 +20,7 @@ BARS = 300          # candles exibidos no gráfico
 HISTORY = "2y"      # histórico baixado (EMA200 precisa de aquecimento)
 LIQ_DAYS = 60       # janela da liquidez (pregões, ~3 meses). Ajuste se quiser
 BATCH = 25          # tickers por requisição
+CROSS_DAYS = 3      # um cruzamento de médias vale se ocorreu nos últimos N pregões (1 = só no último)
 
 
 def load_tickers():
@@ -74,6 +75,20 @@ def add_indicators(df):
     df["STK"], df["STD"] = slow_stoch(h, l, c)
     df["ATR"] = atr(h, l, c)
     return df
+
+
+def recent_cross(a, b, days=CROSS_DAYS):
+    """Cruzamento mais recente de a sobre b nos últimos `days` pregões: 1 = a cruzou para cima, -1 = para baixo."""
+    diff = (a - b).tail(days + 1).to_numpy()
+    result = 0
+    for prev, cur in zip(diff[:-1], diff[1:]):
+        if np.isnan(prev) or np.isnan(cur):
+            continue
+        if prev <= 0 < cur:
+            result = 1
+        elif prev >= 0 > cur:
+            result = -1
+    return result
 
 
 def series(df, col, nd=4):
@@ -173,14 +188,14 @@ def main():
             "close": f(last["Close"]), "chg": f((last["Close"] / prev["Close"] - 1) * 100),
             "rsi": f(last["RSI"]), "macd": f(last["MACD"], 3),
             "above200": bool(last["Close"] > last["EMA200"]) if not pd.isna(last["EMA200"]) else None,
-            "cross": (  # MA9 cruzou SMA20 no último pregão: 1 = para cima, -1 = para baixo
-                1 if prev["MA9"] <= prev["SMA20"] and last["MA9"] > last["SMA20"]
-                else -1 if prev["MA9"] >= prev["SMA20"] and last["MA9"] < last["SMA20"] else 0
-            ),
+            # cruzamentos nos últimos CROSS_DAYS pregões: 1 = para cima, -1 = para baixo, 0 = nenhum
+            "cross": recent_cross(df["MA9"], df["SMA20"]),        # MA9 x SMA20
+            "c2050": recent_cross(df["SMA20"], df["EMA50"]),      # SMA20 x EMA50
+            "m9gt20": bool(last["MA9"] > last["SMA20"]) if not pd.isna(last["SMA20"]) else None,
             "date": df.index[-1].strftime("%Y-%m-%d"),
         })
 
-    meta = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "count": len(index), "items": index}
+    meta = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "count": len(index), "cross_days": CROSS_DAYS, "items": index}
     (OUT / "index.json").write_text(json.dumps(meta, separators=(",", ":")))
     print(f"OK: {len(index)} ativos gerados em {OUT}")
     if not index:
