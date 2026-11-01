@@ -261,7 +261,6 @@ def main():
             # cruzamentos nos últimos CROSS_DAYS pregões: 1 = para cima, -1 = para baixo, 0 = nenhum
             "cross": recent_cross(df["MA9"], df["SMA20"]),        # MA9 x SMA20
             "c2050": recent_cross(df["SMA20"], df["EMA50"]),      # SMA20 x EMA50
-            "m9gt20": bool(last["MA9"] > last["SMA20"]) if not pd.isna(last["SMA20"]) else None,
             "divrsi": div_rsi is not None,     # divergência de alta no RSI
             "divmacd": div_macd is not None,   # divergência de alta no MACD
             "date": df.index[-1].strftime("%Y-%m-%d"),
