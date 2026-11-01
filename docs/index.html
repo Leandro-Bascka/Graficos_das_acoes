@@ -39,6 +39,18 @@
   .plab{position:absolute;right:0;font-size:11px;color:var(--mut);background:#0f1419cc;padding:1px 6px;border-radius:4px;white-space:nowrap}
   #plegend{position:absolute;left:6px;top:4px;z-index:3;pointer-events:none;display:flex;gap:8px;flex-wrap:wrap;max-width:75%;font-size:10px;color:var(--mut);background:#0f1419b3;padding:2px 6px;border-radius:4px}
   #plegend i{display:inline-block;width:12px;height:0;border-top:2px solid;vertical-align:middle;margin-right:3px}
+  .hbtn{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:9px 12px;font-size:15px;white-space:nowrap}
+  #modal{position:fixed;inset:0;z-index:30;background:#000b;display:none;align-items:center;justify-content:center;padding:12px}
+  #modal.show{display:flex}
+  .mcard{background:var(--bg);border:1px solid var(--line);border-radius:12px;width:100%;max-width:560px;max-height:88vh;display:flex;flex-direction:column}
+  .mhead{display:flex;justify-content:space-between;align-items:center;padding:10px 12px;border-bottom:1px solid var(--line)}
+  #mbody{overflow-y:auto;padding:6px 12px 14px}
+  #mbody .li{padding:10px 0;border-bottom:1px solid var(--line)}
+  #mbody .li:last-child{border-bottom:0}
+  #mbody .li b{display:block;margin-bottom:2px}
+  #mbody .li p{margin:0 0 4px;font-size:13px;color:var(--tx)}
+  #mbody .li small{display:block;font-size:12px;color:var(--acc)}
+  #mbody h3{font-size:12px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin:14px 0 0}
   .empty{color:var(--mut);text-align:center;padding:40px 0}
 </style>
 </head>
@@ -53,9 +65,14 @@
       <option value="rsi">RSI (menor)</option>
       <option value="t">A–Z</option>
     </select>
+    <button id="info" class="hbtn">ⓘ Legenda</button>
   </div>
   <div class="chips" id="chips"></div>
 </header>
+<div id="modal"><div class="mcard">
+  <div class="mhead"><b>Legenda dos filtros</b><button id="mclose" class="hbtn">Fechar</button></div>
+  <div id="mbody"></div>
+</div></div>
 <div id="list"></div>
 
 <div id="view">
@@ -69,20 +86,25 @@
 const $ = s => document.querySelector(s);
 let ITEMS = [], shown = [], filter = 'all', chart = null, curIdx = -1;
 
+const TOP_N = 50, RSI_LOW = 35, RSI_HIGH = 70;
 const FILTERS = [
-  ['all','Todos'],['top50','Top 50 liquidez'],['top200','Top 200'],
-  ['rsiLow','RSI < 35'],['rsiHigh','RSI > 70'],['up200','Acima EMA200'],
+  ['all','Todos'],['top50','Top 50 liquidez'],
+  ['rsiLow','RSI < 35'],['rsiHigh','RSI > 70'],
   ['m9gt20','MA9 acima da SMA20'],
   ['crossUp','Cruz. MA9↑SMA20 ({d}d)'],['crossDn','Cruz. MA9↓SMA20 ({d}d)'],
-  ['c2050Up','Cruz. SMA20↑EMA50 ({d}d)'],['c2050Dn','Cruz. SMA20↓EMA50 ({d}d)']
+  ['c2050Up','Cruz. SMA20↑EMA50 ({d}d)'],['c2050Dn','Cruz. SMA20↓EMA50 ({d}d)'],
+  ['divAny','Diverg. de alta (RSI ou MACD)'],['divRsi','Diverg. de alta RSI'],['divMacd','Diverg. de alta MACD']
 ];
 let CD = 3; // janela de cruzamento em pregões (vem do index.json)
+// parâmetros usados no cálculo (vêm do index.json, gerado pelo build.py; estes são só valores iniciais)
+let CFG = {cross_days:3, liq_days:60, div:{pivot:3,recent:10,min_gap:5,max_gap:60,price_tol_pct:0.3,rsi_margin:1,rsi_max:45}};
 const PRED = {
-  all:()=>true, top50:x=>x.rank<=50, top200:x=>x.rank<=200,
-  rsiLow:x=>x.rsi!=null&&x.rsi<35, rsiHigh:x=>x.rsi!=null&&x.rsi>70,
-  up200:x=>x.above200===true, m9gt20:x=>x.m9gt20===true,
+  all:()=>true, top50:x=>x.rank<=TOP_N,
+  rsiLow:x=>x.rsi!=null&&x.rsi<RSI_LOW, rsiHigh:x=>x.rsi!=null&&x.rsi>RSI_HIGH,
+  m9gt20:x=>x.m9gt20===true,
   crossUp:x=>x.cross===1, crossDn:x=>x.cross===-1,
-  c2050Up:x=>x.c2050===1, c2050Dn:x=>x.c2050===-1
+  c2050Up:x=>x.c2050===1, c2050Dn:x=>x.c2050===-1,
+  divAny:x=>x.divrsi===true||x.divmacd===true, divRsi:x=>x.divrsi===true, divMacd:x=>x.divmacd===true
 };
 
 function fmtMoney(v){ if(v>=1e9) return (v/1e9).toFixed(2)+' bi'; if(v>=1e6) return (v/1e6).toFixed(1)+' mi'; return Math.round(v/1e3)+' mil'; }
@@ -97,7 +119,7 @@ function render(){
   $('#list').innerHTML = shown.length ? shown.map((x,i)=>`
     <div class="item" data-i="${i}">
       <div class="rk">#${x.rank}</div>
-      <div><span class="tk">${x.t}</span>${x.cross===1?'<span class="tag up">9↑20</span>':''}${x.cross===-1?'<span class="tag dn">9↓20</span>':''}${x.c2050===1?'<span class="tag up">20↑50</span>':''}${x.c2050===-1?'<span class="tag dn">20↓50</span>':''}
+      <div><span class="tk">${x.t}</span>${x.cross===1?'<span class="tag up">9↑20</span>':''}${x.cross===-1?'<span class="tag dn">9↓20</span>':''}${x.c2050===1?'<span class="tag up">20↑50</span>':''}${x.c2050===-1?'<span class="tag dn">20↓50</span>':''}${x.divrsi?'<span class="tag up">div RSI</span>':''}${x.divmacd?'<span class="tag up">div MACD</span>':''}
         <div class="sub">RSI ${x.rsi??'–'} · Liq ${fmtMoney(x.liq)}</div></div>
       <div class="px">R$ ${x.close?.toFixed(2)??'–'}<div class="${x.chg>=0?'up':'dn'}">${x.chg>=0?'+':''}${x.chg??'–'}%</div></div>
     </div>`).join('') : '<div class="empty">Nenhum ativo encontrado</div>';
@@ -110,7 +132,7 @@ function buildChips(){
 async function openTicker(i){
   curIdx = i; const it = shown[i]; if(!it) return;
   $('#view').classList.add('show'); $('#vt').textContent = it.t;
-  $('#vinfo').innerHTML = `<span>Rank <b>#${it.rank}</b></span><span>R$ <b>${it.close}</b></span><span>RSI <b>${it.rsi??'–'}</b></span><span>MACD <b>${it.macd??'–'}</b></span><span>Liq <b>${fmtMoney(it.liq)}</b></span><span>${it.date}</span>`;
+  $('#vinfo').innerHTML = `<span>Rank <b>#${it.rank}</b></span><span>R$ <b>${it.close}</b></span><span>RSI <b>${it.rsi??'–'}</b></span><span>MACD <b>${it.macd??'–'}</b></span><span>Liq <b>${fmtMoney(it.liq)}</b></span><span>${it.date}</span>${it.divrsi?'<span style="color:#00e676">Diverg. alta RSI</span>':''}${it.divmacd?'<span style="color:#40c4ff">Diverg. alta MACD</span>':''}`;
   const d = await (await fetch(`data/${it.t}.json`)).json();
   draw(d);
 }
@@ -159,6 +181,17 @@ function draw(d){
   k.createPriceLine({price:20,color:'#ef5350',lineStyle:2,lineWidth:1,axisLabelVisible:false});
   // pane 5: ATR
   line(d.atr,'#4da3ff',5,{lastValueVisible:true});
+  // divergências de alta: liga os dois fundos no preço e no indicador (verde = RSI, azul claro = MACD)
+  const seg = (pts,color,pane) => {
+    const s = chart.addSeries(L.LineSeries,{color,lineWidth:2,lineStyle:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false},pane);
+    s.setData(pts);
+  };
+  const DV = d.div || {};
+  [['rsi','#00e676',3],['macd','#40c4ff',2]].forEach(([k,col,pane])=>{
+    const v = DV[k]; if(!v || !d.t.includes(v.d1) || !d.t.includes(v.d2)) return;
+    seg([{time:v.d1,value:v.p1},{time:v.d2,value:v.p2}],col,0);
+    seg([{time:v.d1,value:v.v1},{time:v.d2,value:v.v2}],col,pane);
+  });
   // proporções dos painéis
   const ps = chart.panes(); const f=[6,1.2,1.5,1.5,1.5,1.2];
   ps.forEach((p,i)=>p.setStretchFactor?.(f[i]));
@@ -189,6 +222,45 @@ new ResizeObserver(()=>placeLabels()).observe($('#cwrap'));
 $('#list').addEventListener('click',e=>{ const el=e.target.closest('.item'); if(el) openTicker(+el.dataset.i); });
 $('#chips').addEventListener('click',e=>{ const c=e.target.closest('.chip'); if(!c) return; filter=c.dataset.k; buildChips(); render(); });
 $('#q').addEventListener('input',render); $('#ord').addEventListener('change',render);
+// ---- legenda dos filtros (descrição + configuração atual) ----
+function legendHtml(){
+  const c = CFG, dv = c.div || {}, cd = c.cross_days;
+  const cross = `Janela: ${cd} ${cd===1?'pregão':'pregões'} (conta o cruzamento mais recente dentro da janela)`;
+  const divCfg = extra => `Fundos: mínima mais baixa entre ${dv.pivot} pregões antes e ${dv.pivot} depois (confirmação com ${dv.pivot} pregões de atraso) · `
+    + `2º fundo nos últimos ${dv.recent} pregões e ainda não rompido · distância entre os fundos: ${dv.min_gap} a ${dv.max_gap} pregões · `
+    + `2º fundo pelo menos ${dv.price_tol_pct}% abaixo do 1º · ${extra}`;
+  const rsiCfg = `RSI do 2º fundo pelo menos ${dv.rsi_margin} ponto acima do 1º · RSI do 1º fundo abaixo de ${dv.rsi_max}`;
+  const macdCfg = 'MACD (12,26,9) do 2º fundo acima do 1º · MACD do 1º fundo abaixo de zero';
+  const groups = [
+    ['Liquidez e ordenação', [
+      ['Todos','Mostra todos os ativos, sem filtro.','—'],
+      [`Top ${TOP_N} liquidez`,`Os ${TOP_N} ativos com maior volume financeiro médio (preço de fechamento × volume).`,`Top ${TOP_N} · média dos últimos ${c.liq_days} pregões`],
+    ]],
+    ['RSI', [
+      [`RSI < ${RSI_LOW}`,'RSI de 14 períodos (suavização de Wilder) abaixo do limite: sobrevenda, o papel caiu bastante.',`Limite: ${RSI_LOW}`],
+      [`RSI > ${RSI_HIGH}`,'RSI de 14 períodos acima do limite: sobrecompra, o papel subiu bastante.',`Limite: ${RSI_HIGH}`],
+    ]],
+    ['Médias móveis', [
+      ['MA9 acima da SMA20','Situação de hoje: a média simples de 9 dias está acima da média simples de 20 dias, não importa quando cruzou.','MA9 e SMA20 sobre o fechamento diário'],
+      ['Cruz. MA9↑SMA20','A MA9 cruzou a SMA20 de baixo para cima. Aparece na lista como 9↑20.',cross],
+      ['Cruz. MA9↓SMA20','A MA9 cruzou a SMA20 de cima para baixo. Aparece como 9↓20.',cross],
+      ['Cruz. SMA20↑EMA50','A média simples de 20 dias cruzou a média exponencial de 50 dias de baixo para cima. Aparece como 20↑50.',cross],
+      ['Cruz. SMA20↓EMA50','A média simples de 20 dias cruzou a média exponencial de 50 dias de cima para baixo. Aparece como 20↓50.',cross],
+    ]],
+    ['Divergência de alta', [
+      ['Diverg. de alta (RSI ou MACD)','O preço faz um fundo mais baixo, mas o RSI ou o MACD faz um fundo mais alto: a queda está perdendo força. No gráfico, uma linha tracejada liga os dois fundos no preço e no indicador.','Basta uma das duas divergências (regras abaixo)'],
+      ['Diverg. de alta RSI','Divergência entre o preço e o RSI (linha verde no gráfico).',divCfg(rsiCfg)],
+      ['Diverg. de alta MACD','Divergência entre o preço e o MACD (linha azul clara no gráfico).',divCfg(macdCfg)],
+    ]],
+  ];
+  return groups.map(([g,items])=>`<h3>${g}</h3>`+items.map(([t,d,s])=>`<div class="li"><b>${t}</b><p>${d}</p><small>${s}</small></div>`).join('')).join('')
+    + '<h3>Observação</h3><div class="li"><p>Estes filtros são informação técnica calculada com dados diários do Yahoo Finance, não recomendação de compra ou venda. Os parâmetros ficam no topo do arquivo scripts/build.py.</p></div>';
+}
+function toggleLegend(on){ if(on) $('#mbody').innerHTML = legendHtml(); $('#modal').classList.toggle('show',on); }
+$('#info').onclick=()=>toggleLegend(true);
+$('#mclose').onclick=()=>toggleLegend(false);
+$('#modal').addEventListener('click',e=>{ if(e.target.id==='modal') toggleLegend(false); });
+
 $('#back').onclick=()=>{ $('#view').classList.remove('show'); if(chart){chart.remove();chart=null;} $('#plabels').innerHTML=''; };
 $('#prev').onclick=()=>openTicker(Math.max(0,curIdx-1));
 $('#next').onclick=()=>openTicker(Math.min(shown.length-1,curIdx+1));
@@ -196,7 +268,7 @@ $('#next').onclick=()=>openTicker(Math.min(shown.length-1,curIdx+1));
 (async()=>{
   try{
     const r = await (await fetch('data/index.json',{cache:'no-cache'})).json();
-    ITEMS = r.items; CD = r.cross_days || 3;
+    ITEMS = r.items; CD = r.cross_days || 3; if(r.config) CFG = r.config;
     $('#upd').textContent = 'Atualizado ' + new Date(r.updated).toLocaleString('pt-BR',{dateStyle:'short',timeStyle:'short'}) + ' · ' + r.count + ' ativos';
     buildChips(); render();
   }catch(e){ $('#list').innerHTML='<div class="empty">Dados ainda não gerados. Rode o workflow no GitHub.</div>'; }
