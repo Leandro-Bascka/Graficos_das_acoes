@@ -90,7 +90,6 @@ const TOP_N = 50, RSI_LOW = 35, RSI_HIGH = 70;
 const FILTERS = [
   ['all','Todos'],['top50','Top 50 liquidez'],
   ['rsiLow','RSI < 35'],['rsiHigh','RSI > 70'],
-  ['m9gt20','MA9 acima da SMA20'],
   ['crossUp','Cruz. MA9↑SMA20 ({d}d)'],['crossDn','Cruz. MA9↓SMA20 ({d}d)'],
   ['c2050Up','Cruz. SMA20↑EMA50 ({d}d)'],['c2050Dn','Cruz. SMA20↓EMA50 ({d}d)'],
   ['divAny','Diverg. de alta (RSI ou MACD)'],['divRsi','Diverg. de alta RSI'],['divMacd','Diverg. de alta MACD']
@@ -101,7 +100,6 @@ let CFG = {cross_days:3, liq_days:60, div:{pivot:3,recent:10,min_gap:5,max_gap:6
 const PRED = {
   all:()=>true, top50:x=>x.rank<=TOP_N,
   rsiLow:x=>x.rsi!=null&&x.rsi<RSI_LOW, rsiHigh:x=>x.rsi!=null&&x.rsi>RSI_HIGH,
-  m9gt20:x=>x.m9gt20===true,
   crossUp:x=>x.cross===1, crossDn:x=>x.cross===-1,
   c2050Up:x=>x.c2050===1, c2050Dn:x=>x.c2050===-1,
   divAny:x=>x.divrsi===true||x.divmacd===true, divRsi:x=>x.divrsi===true, divMacd:x=>x.divmacd===true
@@ -241,7 +239,6 @@ function legendHtml(){
       [`RSI > ${RSI_HIGH}`,'RSI de 14 períodos acima do limite: sobrecompra, o papel subiu bastante.',`Limite: ${RSI_HIGH}`],
     ]],
     ['Médias móveis', [
-      ['MA9 acima da SMA20','Situação de hoje: a média simples de 9 dias está acima da média simples de 20 dias, não importa quando cruzou.','MA9 e SMA20 sobre o fechamento diário'],
       ['Cruz. MA9↑SMA20','A MA9 cruzou a SMA20 de baixo para cima. Aparece na lista como 9↑20.',cross],
       ['Cruz. MA9↓SMA20','A MA9 cruzou a SMA20 de cima para baixo. Aparece como 9↓20.',cross],
       ['Cruz. SMA20↑EMA50','A média simples de 20 dias cruzou a média exponencial de 50 dias de baixo para cima. Aparece como 20↑50.',cross],
