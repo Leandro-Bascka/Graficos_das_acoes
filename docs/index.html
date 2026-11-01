@@ -26,14 +26,31 @@
   .tk{font-weight:600}.sub{color:var(--mut);font-size:12px}
   .px{text-align:right}.up{color:var(--up)}.dn{color:var(--dn)}
   .tag{font-size:11px;padding:1px 6px;border-radius:6px;border:1px solid var(--line);margin-left:4px;color:var(--mut)}
-  #view{position:fixed;inset:0;background:var(--bg);z-index:10;display:none;flex-direction:column}
+  #view{position:fixed;inset:0;background:var(--bg);z-index:10;display:none;flex-direction:column;overflow-y:auto;-webkit-overflow-scrolling:touch}
   #view.show{display:flex}
-  #vbar{display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);padding-top:max(8px,env(safe-area-inset-top))}
+  #view>*{flex:none}
+  #vbar{position:sticky;top:0;z-index:6;background:var(--bg);display:flex;align-items:center;gap:8px;padding:8px 10px;border-bottom:1px solid var(--line);padding-top:max(8px,env(safe-area-inset-top))}
   #vbar button{background:var(--card);color:var(--tx);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font-size:15px}
   #vt{flex:1;font-weight:600}
   #vinfo{display:flex;gap:12px;overflow-x:auto;padding:6px 12px;font-size:12px;color:var(--mut);border-bottom:1px solid var(--line);white-space:nowrap}
   #vinfo b{color:var(--tx);font-weight:600}
-  #cwrap{position:relative;flex:1;min-height:0}
+  #cwrap{position:relative;height:calc(100vh - 110px);height:calc(100dvh - 110px);min-height:460px}
+  #proj{padding:12px 12px calc(28px + env(safe-area-inset-bottom));border-top:1px solid var(--line)}
+  #proj h2{font-size:15px;margin:16px 0 4px}
+  #proj h2:first-child{margin-top:0}
+  #proj p{margin:4px 0 8px;font-size:13px;color:var(--mut)}
+  #proj p b,#proj td b{color:var(--tx)}
+  .ptoggle{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px;font-size:14px}
+  .ptoggle label{display:flex;align-items:center;gap:6px}
+  .ptoggle input{flex:none;width:18px;height:18px;padding:0;margin:0}
+  table.pt{width:100%;border-collapse:collapse;font-size:13px;margin:6px 0}
+  table.pt th{font-weight:500;color:var(--mut);text-align:right;padding:5px 4px;border-bottom:1px solid var(--line);font-size:12px}
+  table.pt td{text-align:right;padding:6px 4px;border-bottom:1px solid var(--line);white-space:nowrap}
+  table.pt th:first-child,table.pt td:first-child{text-align:left}
+  table.pt td small{display:block;color:var(--mut);font-size:11px}
+  table.pt tr.now td{background:#16314d;font-weight:600}
+  table.pt tr.sw td:first-child{color:var(--mut)}
+  .z1{color:var(--up)}.z2{color:#ffd54f}.z3{color:var(--mut)}
   #chart{position:absolute;inset:0}
   #plabels{position:absolute;inset:0;pointer-events:none;z-index:3}
   .plab{position:absolute;right:0;font-size:11px;color:var(--mut);background:#0f1419cc;padding:1px 6px;border-radius:4px;white-space:nowrap}
@@ -79,7 +96,8 @@
   <div id="vbar"><button id="back">‹ Voltar</button><span id="vt"></span><button id="prev">←</button><button id="next">→</button></div>
   <div id="vinfo"></div>
   <div id="cwrap"><div id="chart"></div><div id="plabels"></div>
-    <div id="plegend"><span><i style="border-color:#4da3ff"></i>MA9</span><span><i style="border-color:#f06292"></i>SMA20</span><span><i style="border-color:#ffa726"></i>EMA50</span><span><i style="border-color:#e6edf3"></i>EMA200</span><span><i style="border-color:#5b6773;border-top-style:dashed"></i>Bollinger</span></div></div>
+    <div id="plegend"><span><i style="border-color:#4da3ff"></i>MA9</span><span><i style="border-color:#f06292"></i>SMA20</span><span><i style="border-color:#ffa726"></i>EMA50</span><span><i style="border-color:#e6edf3"></i>EMA200</span><span><i style="border-color:#5b6773;border-top-style:dashed"></i>Bollinger</span><span id="plextra"></span></div></div>
+  <div id="proj"></div>
 </div>
 
 <script>
@@ -132,7 +150,62 @@ async function openTicker(i){
   $('#view').classList.add('show'); $('#vt').textContent = it.t;
   $('#vinfo').innerHTML = `<span>Rank <b>#${it.rank}</b></span><span>R$ <b>${it.close}</b></span><span>RSI <b>${it.rsi??'–'}</b></span><span>MACD <b>${it.macd??'–'}</b></span><span>Liq <b>${fmtMoney(it.liq)}</b></span><span>${it.date}</span>${it.divrsi?'<span style="color:#00e676">Diverg. alta RSI</span>':''}${it.divmacd?'<span style="color:#40c4ff">Diverg. alta MACD</span>':''}`;
   const d = await (await fetch(`data/${it.t}.json`)).json();
+  CUR = d; $('#view').scrollTop = 0;
   draw(d);
+  $('#proj').innerHTML = projHtml(d);
+  $('#tg-vol').onchange = e => { SHOW_VOL = e.target.checked; draw(CUR); };
+  $('#tg-fib').onchange = e => { SHOW_FIB = e.target.checked; draw(CUR); };
+}
+
+// ---- análise: volatilidade histórica projetada + Fibonacci ----
+let CUR = null, SHOW_VOL = true, SHOW_FIB = true;
+const f2 = v => v==null ? '–' : v.toFixed(2);
+const sgn = v => (v>=0?'+':'') + v.toFixed(1) + '%';
+const brDate = s => s ? s.slice(8,10)+'/'+s.slice(5,7)+'/'+s.slice(2,4) : '';
+function projHtml(d){
+  const V = d.vol, F = d.fib, last = d.c[d.c.length-1], H = V ? V.dates.length : 0;
+  let h = `<div class="ptoggle"><label><input type="checkbox" id="tg-vol" ${SHOW_VOL?'checked':''}> Projeção ±σ no gráfico</label>
+           <label><input type="checkbox" id="tg-fib" ${SHOW_FIB?'checked':''}> Fibonacci no gráfico</label></div>`;
+  h += '<h2>Volatilidade histórica projetada</h2>';
+  if(V){
+    const cell = p => `${f2(p)}<small>${sgn((p/V.last-1)*100)}</small>`;
+    h += `<p>Desvio padrão diário dos retornos: <b>${(V.sigma*100).toFixed(2)}%</b> (${V.n} pregões) · anualizado: <b>${(V.ann*100).toFixed(1)}%</b> · último preço <b>R$ ${f2(V.last)}</b>.</p>
+      <table class="pt"><tr><th>Em</th><th>−2σ</th><th>−1σ</th><th>+1σ</th><th>+2σ</th></tr>
+      ${V.steps.map(s=>`<tr><td>${s.n} pregões</td><td>${cell(s.l2)}</td><td>${cell(s.l1)}</td><td>${cell(s.u1)}</td><td>${cell(s.u2)}</td></tr>`).join('')}</table>
+      <p>Na teoria (retornos normais, sem tendência), o preço ficaria dentro de ±1σ em ~68% dos casos e dentro de ±2σ em ~95%. No gráfico, as linhas tracejadas amarelas são ±1σ e as pontilhadas roxas, ±2σ.</p>`;
+  } else h += '<p>Dados insuficientes para calcular a volatilidade.</p>';
+
+  h += '<h2>Fibonacci</h2>';
+  if(F){
+    const up = F.dir === 'alta';
+    h += `<p>Último grande movimento de <b>${F.dir}</b> (janela de ${CFG.fib?.lookback ?? 120} pregões): ${up
+      ? `mínima <b>R$ ${f2(F.lo)}</b> (${brDate(F.d_lo)}) → máxima <b>R$ ${f2(F.hi)}</b> (${brDate(F.d_hi)})`
+      : `máxima <b>R$ ${f2(F.hi)}</b> (${brDate(F.d_hi)}) → mínima <b>R$ ${f2(F.lo)}</b> (${brDate(F.d_lo)})`}.
+      ${up ? 'As retrações indicam até onde uma correção pode chegar; as extensões, alvos se a alta continuar.'
+           : 'As retrações indicam até onde um repique pode chegar; as extensões, alvos se a queda continuar.'}</p>`;
+    const pct = v => (v*100).toFixed(v*100 % 1 ? 1 : 0);
+    const rows = [
+      ...F.ret.map(([r,p]) => ({n:`Retração ${pct(r)}%`, p})),
+      ...F.ext.map(([e,p]) => ({n:`Extensão ${pct(e)}%`, p})),
+      {n:`Topo (${brDate(F.d_hi)})`, p:F.hi, sw:1}, {n:`Fundo (${brDate(F.d_lo)})`, p:F.lo, sw:1},
+      {n:'Preço atual', p:last, now:1},
+    ].sort((a,b)=>b.p-a.p);
+    const reach = p => {
+      if(!V) return ['–','z3'];
+      const z = Math.abs(Math.log(p/last)) / (V.sigma*Math.sqrt(H));
+      return z<=1 ? ['≤ 1σ','z1'] : z<=2 ? ['≤ 2σ','z2'] : ['> 2σ','z3'];
+    };
+    h += `<table class="pt"><tr><th>Nível</th><th>Preço</th><th>Dist.</th><th>Em ${H} pregões</th></tr>
+      ${rows.map(r=>{ const [z,zc] = reach(r.p);
+        return `<tr class="${r.now?'now':''} ${r.sw?'sw':''}"><td>${r.n}</td><td>${f2(r.p)}</td><td>${r.now?'':sgn((r.p/last-1)*100)}</td><td class="${zc}">${r.now?'':z}</td></tr>`; }).join('')}</table>`;
+    const conf = [...F.ret.map(([r,p])=>[`Retr. ${pct(r)}%`,p]), ...F.ext.map(([e,p])=>[`Ext. ${pct(e)}%`,p])]
+      .filter(([,p]) => V && Math.abs(Math.log(p/last)) / (V.sigma*Math.sqrt(H)) <= 1);
+    h += V ? (conf.length
+      ? `<p><b>Em conjunto:</b> níveis de Fibonacci dentro do cone de ±1σ em ${H} pregões, ou seja, alcançáveis sem um movimento fora do comum: <b>${conf.map(([n,p])=>`${n} (R$ ${f2(p)})`).join(' · ')}</b>.</p>`
+      : `<p><b>Em conjunto:</b> nenhum nível de Fibonacci cai dentro do cone de ±1σ em ${H} pregões; alcançar qualquer um exigiria um movimento acima do típico.</p>`) : '';
+  } else h += '<p>Sem movimento relevante na janela para traçar níveis de Fibonacci.</p>';
+  h += '<p style="margin-top:14px;font-size:12px">Projeções estatísticas teóricas calculadas a partir do passado; não são previsão nem recomendação de compra ou venda. Mercados saem do cone com frequência, principalmente em eventos e notícias.</p>';
+  return h;
 }
 
 function draw(d){
@@ -143,7 +216,8 @@ function draw(d){
     layout:{background:{color:'#0f1419'},textColor:'#8b98a5',panes:{separatorColor:'#2a3441'}},
     grid:{vertLines:{color:'#1a222c'},horzLines:{color:'#1a222c'}},
     rightPriceScale:{borderColor:'#2a3441'}, timeScale:{borderColor:'#2a3441',rightOffset:3},
-    crosshair:{mode:L.CrosshairMode.Normal}
+    crosshair:{mode:L.CrosshairMode.Normal},
+    handleScroll:{vertTouchDrag:false}   // arrastar na vertical rola a página (até a análise), não o gráfico
   });
   const line = (arr,color,pane,opts={}) => {
     const s = chart.addSeries(L.LineSeries,{color,lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false,...opts},pane);
@@ -190,10 +264,31 @@ function draw(d){
     seg([{time:v.d1,value:v.p1},{time:v.d2,value:v.p2}],col,0);
     seg([{time:v.d1,value:v.v1},{time:v.d2,value:v.v2}],col,pane);
   });
+  // projeção de volatilidade: cone de ±1σ (amarelo tracejado) e ±2σ (roxo pontilhado) a partir do último fechamento
+  const V = d.vol, F = d.fib; let ahead = 0, extra = '';
+  if(SHOW_VOL && V){
+    const lastT = d.t[d.t.length-1];
+    const cone = (arr,color,style) => {
+      const s = chart.addSeries(L.LineSeries,{color,lineWidth:1,lineStyle:style,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false},0);
+      s.setData([{time:lastT,value:V.last}, ...V.dates.map((t,i)=>({time:t,value:arr[i]}))]);
+    };
+    cone(V.u1,'#ffd54f',2); cone(V.l1,'#ffd54f',2); cone(V.u2,'#ab47bc',1); cone(V.l2,'#ab47bc',1);
+    ahead = V.dates.length;
+    extra += '<span><i style="border-color:#ffd54f;border-top-style:dashed"></i>±1σ</span><span><i style="border-color:#ab47bc;border-top-style:dotted"></i>±2σ</span>';
+  }
+  // Fibonacci: retrações (laranja) e extensões (verde-água) do último grande movimento
+  if(SHOW_FIB && F){
+    const pl = (price,color,title) => cs.createPriceLine({price,color,lineStyle:3,lineWidth:1,axisLabelVisible:true,title});
+    F.ret.forEach(([r,p]) => pl(p,'#ffb74d',String(r)));
+    F.ext.forEach(([e,p]) => pl(p,'#80cbc4','x'+e));
+    extra += '<span><i style="border-color:#ffb74d"></i>Fib retr.</span><span><i style="border-color:#80cbc4"></i>Fib ext.</span>';
+  }
+  $('#plextra').innerHTML = extra;
   // proporções dos painéis
-  const ps = chart.panes(); const f=[6,1.2,1.5,1.5,1.5,1.2];
+  const ps = chart.panes(); const f=[8,1.2,1.5,1.5,1.5,1.2];
   ps.forEach((p,i)=>p.setStretchFactor?.(f[i]));
-  chart.timeScale().setVisibleLogicalRange({from:d.t.length-90,to:d.t.length+3});
+  const lab = SHOW_FIB && F;   // com Fibonacci ligado, deixa folga à direita para os rótulos não cobrirem o cone
+  chart.timeScale().setVisibleLogicalRange({from:d.t.length-(lab?78:90),to:d.t.length+ahead+(lab?16:3)});
   setTimeout(placeLabels,80);
 }
 
@@ -223,6 +318,7 @@ $('#q').addEventListener('input',render); $('#ord').addEventListener('change',re
 // ---- legenda dos filtros (descrição + configuração atual) ----
 function legendHtml(){
   const c = CFG, dv = c.div || {}, cd = c.cross_days;
+  const vl = c.vol || {window:60,horizon:20,steps:[5,10,20]}, fb = c.fib || {lookback:120,ret:[0.236,0.382,0.5,0.618,0.786],ext:[1.272,1.618]};
   const cross = `Janela: ${cd} ${cd===1?'pregão':'pregões'} (conta o cruzamento mais recente dentro da janela)`;
   const divCfg = extra => `Fundos: mínima mais baixa entre ${dv.pivot} pregões antes e ${dv.pivot} depois (confirmação com ${dv.pivot} pregões de atraso) · `
     + `2º fundo nos últimos ${dv.recent} pregões e ainda não rompido · distância entre os fundos: ${dv.min_gap} a ${dv.max_gap} pregões · `
@@ -248,6 +344,14 @@ function legendHtml(){
       ['Diverg. de alta (RSI ou MACD)','O preço faz um fundo mais baixo, mas o RSI ou o MACD faz um fundo mais alto: a queda está perdendo força. No gráfico, uma linha tracejada liga os dois fundos no preço e no indicador.','Basta uma das duas divergências (regras abaixo)'],
       ['Diverg. de alta RSI','Divergência entre o preço e o RSI (linha verde no gráfico).',divCfg(rsiCfg)],
       ['Diverg. de alta MACD','Divergência entre o preço e o MACD (linha azul clara no gráfico).',divCfg(macdCfg)],
+    ]],
+    ['Análise no fim de cada gráfico (vale para todos os ativos)', [
+      ['Projeção de volatilidade (±1σ e ±2σ)',
+       'Desvio padrão dos retornos diários do papel, projetado para frente com a raiz do tempo e sem tendência. Em teoria, ±1σ cobre ~68% dos casos e ±2σ ~95%. No gráfico: linhas amarelas tracejadas (±1σ) e roxas pontilhadas (±2σ) à direita do último candle; abaixo do gráfico, a tabela de preços em 5, 10 e 20 pregões.',
+       `Volatilidade medida nos últimos ${vl.window} pregões · projeção de ${vl.horizon} pregões · tabela em ${vl.steps.join(', ')} pregões`],
+      ['Fibonacci (retração e extensão)',
+       'Acha a maior máxima e a menor mínima da janela e usa o movimento entre elas. Retrações (laranja) mostram até onde uma correção ou repique pode ir; extensões (verde-água), alvos se o movimento continuar. A tabela mostra a distância de cada nível ao preço e se ele cabe dentro do cone de ±1σ ou ±2σ.',
+       `Janela de ${fb.lookback} pregões · retrações: ${fb.ret.map(x=>(x*100).toFixed(x*100%1?1:0)+'%').join(', ')} · extensões: ${fb.ext.map(x=>(x*100).toFixed(1)+'%').join(', ')}`],
     ]],
   ];
   return groups.map(([g,items])=>`<h3>${g}</h3>`+items.map(([t,d,s])=>`<div class="li"><b>${t}</b><p>${d}</p><small>${s}</small></div>`).join('')).join('')
