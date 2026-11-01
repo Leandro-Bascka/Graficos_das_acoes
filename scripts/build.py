@@ -22,6 +22,15 @@ LIQ_DAYS = 60       # janela da liquidez (pregões, ~3 meses). Ajuste se quiser
 BATCH = 25          # tickers por requisição
 CROSS_DAYS = 3      # um cruzamento de médias vale se ocorreu nos últimos N pregões (1 = só no último)
 
+# divergência de alta (preço faz fundo mais baixo, indicador faz fundo mais alto)
+DIV_PIVOT = 3       # um fundo é a mínima mais baixa entre N pregões antes e N depois (precisa de N pregões de confirmação)
+DIV_RECENT = 10     # o 2º fundo precisa ter ocorrido nos últimos N pregões
+DIV_MIN_GAP = 5     # distância mínima (pregões) entre os dois fundos
+DIV_MAX_GAP = 60    # distância máxima (pregões) entre os dois fundos
+DIV_PRICE_TOL = 0.003  # o 2º fundo precisa ser pelo menos 0,3% mais baixo que o 1º
+DIV_RSI_MARGIN = 1.0   # o RSI do 2º fundo precisa ser pelo menos 1 ponto maior
+DIV_RSI_MAX = 45    # RSI do 1º fundo precisa estar abaixo disso (queda de fato)
+
 
 def load_tickers():
     seen, out = set(), []
@@ -89,6 +98,64 @@ def recent_cross(a, b, days=CROSS_DAYS):
         elif prev >= 0 > cur:
             result = -1
     return result
+
+
+def pivot_lows(low, k=DIV_PIVOT):
+    """Índices dos fundos: mínima mais baixa que as k anteriores e não maior que as k seguintes."""
+    a = low.to_numpy(dtype=float)
+    out = []
+    for i in range(k, len(a) - k):
+        if np.isnan(a[i - k : i + k + 1]).any():
+            continue
+        if a[i] < a[i - k : i].min() and a[i] <= a[i + 1 : i + k + 1].min():
+            out.append(i)
+    return out
+
+
+def bullish_divergence(low, ind, ind_max=None, margin=0.0):
+    """Divergência de alta: 2º fundo do preço mais baixo que o 1º, mas o indicador (RSI/MACD) mais alto.
+
+    Devolve dict com datas/valores dos dois fundos, ou None. O 2º fundo precisa ser recente e não pode ter
+    sido rompido depois. `ind_max` exige que o indicador do 1º fundo esteja abaixo desse valor.
+    """
+    n = len(low)
+    lows = low.to_numpy(dtype=float)
+    vals = ind.to_numpy(dtype=float)
+    piv = pivot_lows(low)
+    if len(piv) < 2:
+        return None
+
+    def ind_at(i):  # menor valor do indicador perto do fundo (o fundo do indicador pode ser 1-2 pregões deslocado)
+        w = vals[max(0, i - 2) : i + 3]
+        return None if np.isnan(w).all() else float(np.nanmin(w))
+
+    p2 = piv[-1]
+    if n - 1 - p2 > DIV_RECENT or lows[p2 + 1 :].min() < lows[p2]:
+        return None  # fundo antigo demais ou já rompido
+    v2 = ind_at(p2)
+    if v2 is None:
+        return None
+    for p1 in reversed(piv[:-1]):
+        gap = p2 - p1
+        if gap > DIV_MAX_GAP:
+            break
+        if gap < DIV_MIN_GAP:
+            continue
+        if lows[p2] >= lows[p1] * (1 - DIV_PRICE_TOL):
+            continue  # preço não fez fundo mais baixo
+        if lows[p1 : p2 + 1].min() < lows[p2]:
+            continue  # existe fundo ainda mais baixo no meio
+        v1 = ind_at(p1)
+        if v1 is None or v2 <= v1 + margin:
+            continue  # indicador não fez fundo mais alto
+        if ind_max is not None and v1 >= ind_max:
+            continue
+        d = low.index
+        return {
+            "d1": d[p1].strftime("%Y-%m-%d"), "p1": round(float(lows[p1]), 2), "v1": round(v1, 3),
+            "d2": d[p2].strftime("%Y-%m-%d"), "p2": round(float(lows[p2]), 2), "v2": round(v2, 3),
+        }
+    return None
 
 
 def series(df, col, nd=4):
@@ -165,7 +232,10 @@ def main():
         df = add_indicators(df.copy())
         last, prev = df.iloc[-1], df.iloc[-2]
         view = df.tail(BARS)
+        div_rsi = bullish_divergence(df["Low"], df["RSI"], ind_max=DIV_RSI_MAX, margin=DIV_RSI_MARGIN)
+        div_macd = bullish_divergence(df["Low"], df["MACD"], ind_max=0.0)  # MACD do 1º fundo abaixo de zero
         payload = {
+            "div": {k: v for k, v in (("rsi", div_rsi), ("macd", div_macd)) if v},
             "ticker": t,
             "rank": rank[t],
             "liq": liq[t],
@@ -192,10 +262,18 @@ def main():
             "cross": recent_cross(df["MA9"], df["SMA20"]),        # MA9 x SMA20
             "c2050": recent_cross(df["SMA20"], df["EMA50"]),      # SMA20 x EMA50
             "m9gt20": bool(last["MA9"] > last["SMA20"]) if not pd.isna(last["SMA20"]) else None,
+            "divrsi": div_rsi is not None,     # divergência de alta no RSI
+            "divmacd": div_macd is not None,   # divergência de alta no MACD
             "date": df.index[-1].strftime("%Y-%m-%d"),
         })
 
-    meta = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "count": len(index), "cross_days": CROSS_DAYS, "items": index}
+    config = {  # parâmetros em uso; o site mostra isso na "Legenda"
+        "cross_days": CROSS_DAYS, "liq_days": LIQ_DAYS,
+        "div": {"pivot": DIV_PIVOT, "recent": DIV_RECENT, "min_gap": DIV_MIN_GAP, "max_gap": DIV_MAX_GAP,
+                "price_tol_pct": round(DIV_PRICE_TOL * 100, 2), "rsi_margin": DIV_RSI_MARGIN, "rsi_max": DIV_RSI_MAX},
+    }
+    meta = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "count": len(index),
+            "cross_days": CROSS_DAYS, "config": config, "items": index}
     (OUT / "index.json").write_text(json.dumps(meta, separators=(",", ":")))
     print(f"OK: {len(index)} ativos gerados em {OUT}")
     if not index:
