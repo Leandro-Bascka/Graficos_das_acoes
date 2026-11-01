@@ -31,6 +31,16 @@ DIV_PRICE_TOL = 0.003  # o 2º fundo precisa ser pelo menos 0,3% mais baixo que 
 DIV_RSI_MARGIN = 1.0   # o RSI do 2º fundo precisa ser pelo menos 1 ponto maior
 DIV_RSI_MAX = 45    # RSI do 1º fundo precisa estar abaixo disso (queda de fato)
 
+# projeção de volatilidade (desvio padrão dos retornos diários, projetado com a raiz do tempo)
+VOL_WINDOW = 60     # pregões usados para medir a volatilidade histórica
+VOL_HORIZON = 20    # quantos pregões à frente projetar no gráfico
+VOL_STEPS = (5, 10, 20)  # horizontes mostrados na tabela
+
+# Fibonacci sobre o último grande movimento (maior máxima x menor mínima da janela)
+FIB_LOOKBACK = 120  # pregões olhados para achar a máxima e a mínima do movimento
+FIB_RET = (0.236, 0.382, 0.5, 0.618, 0.786)
+FIB_EXT = (1.272, 1.618)
+
 
 def load_tickers():
     seen, out = set(), []
@@ -158,6 +168,65 @@ def bullish_divergence(low, ind, ind_max=None, margin=0.0):
     return None
 
 
+def vol_projection(df):
+    """Cone de volatilidade: preço esperado em ±1σ e ±2σ nos próximos pregões.
+
+    σ = desvio padrão dos retornos logarítmicos diários (últimos VOL_WINDOW pregões). Em h pregões o desvio
+    cresce com a raiz de h. Sem tendência (deriva zero). Teoria: assume retornos ~ normais, então ±1σ cobre ~68%
+    e ±2σ ~95% dos casos; na prática as caudas são mais pesadas e o mercado pode sair do cone.
+    """
+    c = df["Close"]
+    r = np.log(c / c.shift()).dropna().tail(VOL_WINDOW)
+    if len(r) < 20:
+        return None
+    s = float(r.std())
+    if not np.isfinite(s) or s <= 0:
+        return None
+    last = float(c.iloc[-1])
+    start = pd.Timestamp(df.index[-1]).tz_localize(None) + pd.Timedelta(days=1)
+    dates = [d.strftime("%Y-%m-%d") for d in pd.bdate_range(start, periods=VOL_HORIZON)]
+
+    def at(h, k):
+        return round(last * float(np.exp(k * s * np.sqrt(h))), 2)
+
+    hs = range(1, VOL_HORIZON + 1)
+    return {
+        "sigma": round(s, 5), "ann": round(s * np.sqrt(252), 4), "n": int(len(r)), "last": round(last, 2),
+        "dates": dates,
+        "u1": [at(h, 1) for h in hs], "l1": [at(h, -1) for h in hs],
+        "u2": [at(h, 2) for h in hs], "l2": [at(h, -2) for h in hs],
+        "steps": [{"n": h, "u1": at(h, 1), "l1": at(h, -1), "u2": at(h, 2), "l2": at(h, -2)} for h in VOL_STEPS],
+    }
+
+
+def fib_levels(df):
+    """Retração e extensão de Fibonacci sobre o último grande movimento da janela FIB_LOOKBACK."""
+    w = df.tail(FIB_LOOKBACK)
+    if len(w) < 30:
+        return None
+    highs, lows = w["High"].to_numpy(dtype=float), w["Low"].to_numpy(dtype=float)
+    hi_i, lo_i = int(np.nanargmax(highs)), int(np.nanargmin(lows))
+    hi, lo = float(highs[hi_i]), float(lows[lo_i])
+    rng = hi - lo
+    if hi_i == lo_i or rng <= 0 or rng / hi < 0.03:   # movimento pequeno demais para ser útil
+        return None
+    up = lo_i < hi_i                                   # mínima antes da máxima = movimento de alta
+    if up:   # retrações descem a partir da máxima; extensões projetam acima dela
+        ret = [(r, hi - r * rng) for r in FIB_RET]
+        ext = [(e, lo + e * rng) for e in FIB_EXT]
+    else:    # movimento de baixa: retrações sobem a partir da mínima; extensões projetam abaixo dela
+        ret = [(r, lo + r * rng) for r in FIB_RET]
+        ext = [(e, hi - e * rng) for e in FIB_EXT]
+    ext = [(e, p) for e, p in ext if p > 0]
+    return {
+        "dir": "alta" if up else "baixa",
+        "hi": round(hi, 2), "lo": round(lo, 2),
+        "d_hi": w.index[hi_i].strftime("%Y-%m-%d"), "d_lo": w.index[lo_i].strftime("%Y-%m-%d"),
+        "ret": [[r, round(p, 2)] for r, p in ret],
+        "ext": [[e, round(p, 2)] for e, p in ext],
+    }
+
+
 def series(df, col, nd=4):
     s = df[col]
     return [None if pd.isna(v) else round(float(v), nd) for v in s]
@@ -236,6 +305,8 @@ def main():
         div_macd = bullish_divergence(df["Low"], df["MACD"], ind_max=0.0)  # MACD do 1º fundo abaixo de zero
         payload = {
             "div": {k: v for k, v in (("rsi", div_rsi), ("macd", div_macd)) if v},
+            "vol": vol_projection(df),
+            "fib": fib_levels(df),
             "ticker": t,
             "rank": rank[t],
             "liq": liq[t],
@@ -270,6 +341,8 @@ def main():
         "cross_days": CROSS_DAYS, "liq_days": LIQ_DAYS,
         "div": {"pivot": DIV_PIVOT, "recent": DIV_RECENT, "min_gap": DIV_MIN_GAP, "max_gap": DIV_MAX_GAP,
                 "price_tol_pct": round(DIV_PRICE_TOL * 100, 2), "rsi_margin": DIV_RSI_MARGIN, "rsi_max": DIV_RSI_MAX},
+        "vol": {"window": VOL_WINDOW, "horizon": VOL_HORIZON, "steps": list(VOL_STEPS)},
+        "fib": {"lookback": FIB_LOOKBACK, "ret": list(FIB_RET), "ext": list(FIB_EXT)},
     }
     meta = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "count": len(index),
             "cross_days": CROSS_DAYS, "config": config, "items": index}
