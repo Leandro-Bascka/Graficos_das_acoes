@@ -37,4 +37,11 @@ python -m http.server -d docs 8000 # abra http://localhost:8000
 - **Tickers**: edite `tickers.txt` (sem `.SA`; duplicatas são ignoradas).
 - **Janela de liquidez / candles exibidos**: constantes no topo de `scripts/build.py`.
 - **Horário da atualização**: `cron` em `.github/workflows/update.yml` (em UTC).
-- **Filtros** (RSI, EMA200, MA9 x SMA20, SMA20 x EMA50): objeto `PRED` em `docs/index.html`. Janela dos cruzamentos: `CROSS_DAYS` em `scripts/build.py` (padrão 3 pregões).
+- **Filtros** (Top 50, RSI, MA9 x SMA20, SMA20 x EMA50, divergência; o botão "Legenda" do site explica cada um): objeto `PRED` em `docs/index.html`. Janela dos cruzamentos: `CROSS_DAYS` em `scripts/build.py` (padrão 3 pregões).
+
+## Divergência de alta
+
+O script marca uma divergência de alta quando o preço faz um fundo **mais baixo** que o anterior, mas o RSI (ou o MACD)
+faz um fundo **mais alto**. Os dois fundos são ligados no gráfico (verde = RSI, azul claro = MACD) e há filtros no site.
+Parâmetros no topo de `scripts/build.py` (`DIV_*`): janela do fundo, quão recente, distância entre fundos, margem do RSI.
+O 2º fundo só é confirmado depois de `DIV_PIVOT` pregões (padrão 3), então o sinal chega com esse atraso.
