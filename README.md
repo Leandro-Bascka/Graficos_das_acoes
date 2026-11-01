@@ -45,3 +45,14 @@ O script marca uma divergência de alta quando o preço faz um fundo **mais baix
 faz um fundo **mais alto**. Os dois fundos são ligados no gráfico (verde = RSI, azul claro = MACD) e há filtros no site.
 Parâmetros no topo de `scripts/build.py` (`DIV_*`): janela do fundo, quão recente, distância entre fundos, margem do RSI.
 O 2º fundo só é confirmado depois de `DIV_PIVOT` pregões (padrão 3), então o sinal chega com esse atraso.
+
+## Projeção de volatilidade e Fibonacci
+
+No fim de cada gráfico há uma análise (role a página para baixo), disponível para todos os ativos, qualquer que seja o filtro:
+
+- **Volatilidade:** desvio padrão dos retornos diários (`VOL_WINDOW`, 60 pregões) projetado com a raiz do tempo, sem tendência.
+  O gráfico mostra o cone de ±1σ (amarelo tracejado) e ±2σ (roxo pontilhado) por `VOL_HORIZON` pregões; a tabela mostra 5, 10 e 20 pregões.
+- **Fibonacci:** retrações (23,6 / 38,2 / 50 / 61,8 / 78,6%) e extensões (127,2 / 161,8%) sobre o último grande movimento
+  (maior máxima x menor mínima dos últimos `FIB_LOOKBACK` pregões). A tabela diz quais níveis cabem dentro do cone de ±1σ ou ±2σ.
+- As datas futuras do cone são dias úteis; feriados da B3 não são descontados.
+- Parâmetros no topo de `scripts/build.py` (`VOL_*`, `FIB_*`). Teoria estatística, não previsão.
