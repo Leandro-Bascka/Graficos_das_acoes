@@ -105,6 +105,7 @@ const $ = s => document.querySelector(s);
 let ITEMS = [], shown = [], filter = 'all', chart = null, curIdx = -1;
 
 const TOP_N = 50, RSI_LOW = 35, RSI_HIGH = 70;
+const FIB_START = 5;   // as linhas de Fibonacci começam N pregões à frente do último candle
 const FILTERS = [
   ['all','Todos'],['top50','Top 50 liquidez'],
   ['rsiLow','RSI < 35'],['rsiHigh','RSI > 70'],
@@ -289,9 +290,10 @@ function draw(d){
     const lastT = d.t[d.t.length-1];
     const fut = (V && V.dates.length) ? V.dates : futureDates(lastT, 20);
     const endT = fut[fut.length-1]; ahead = Math.max(ahead, fut.length);
+    const startT = fut[Math.min(FIB_START, fut.length) - 1];   // as linhas só começam FIB_START pregões à frente (o cone continua no último candle)
     const fl = (price,color,title) => {
       const s = chart.addSeries(L.LineSeries,{color,lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:false,title,autoscaleInfoProvider:()=>null},0);
-      s.setData([{time:lastT,value:price},{time:endT,value:price}]);
+      s.setData([{time:startT,value:price},{time:endT,value:price}]);
     };
     F.ret.forEach(([r,p]) => fl(p,'#ffb74d',String(r)));
     F.ext.forEach(([e,p]) => fl(p,'#80cbc4','x'+e));
@@ -364,7 +366,7 @@ function legendHtml(){
        'Desvio padrão dos retornos diários do papel, projetado para frente com a raiz do tempo e sem tendência. Em teoria, ±1σ cobre ~68% dos casos e ±2σ ~95%. No gráfico: linhas amarelas tracejadas (±1σ) e roxas pontilhadas (±2σ) à direita do último candle; abaixo do gráfico, a tabela de preços em 5, 10 e 20 pregões.',
        `Volatilidade medida nos últimos ${vl.window} pregões · projeção de ${vl.horizon} pregões · tabela em ${vl.steps.join(', ')} pregões`],
       ['Fibonacci (retração e extensão)',
-       'Acha a maior máxima e a menor mínima da janela e usa o movimento entre elas. Retrações (laranja) mostram até onde uma correção ou repique pode ir; extensões (verde-água), alvos se o movimento continuar. No gráfico, as linhas saem do último candle para a frente, junto com o cone, sem poluir o histórico. A tabela mostra a distância de cada nível ao preço e se ele cabe dentro do cone de ±1σ ou ±2σ.',
+       `Acha a maior máxima e a menor mínima da janela e usa o movimento entre elas. Retrações (laranja) mostram até onde uma correção ou repique pode ir; extensões (verde-água), alvos se o movimento continuar. No gráfico, as linhas começam ${FIB_START} pregões à frente do último candle (o cone de volatilidade começa no último candle), sem poluir o histórico nem o início da análise. A tabela mostra a distância de cada nível ao preço e se ele cabe dentro do cone de ±1σ ou ±2σ.`,
        `Janela de ${fb.lookback} pregões · retrações: ${fb.ret.map(x=>(x*100).toFixed(x*100%1?1:0)+'%').join(', ')} · extensões: ${fb.ext.map(x=>(x*100).toFixed(1)+'%').join(', ')}`],
     ]],
   ];
