@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import yfinance as yf
 
+import institucional  # scanner de acumulação / reversão (scripts/institucional.py)
+
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "data"
 BARS = 300          # candles exibidos no gráfico
@@ -279,6 +281,14 @@ def main():
         print(f"  baixados {len(frames)} válidos até agora")
         time.sleep(3)  # pausa entre lotes para não ser limitado
 
+    # benchmark do scanner de acumulação/reversão (BOVA11); se falhar, o scanner segue sem a força relativa
+    bench = None
+    try:
+        bench = institucional.preparar_benchmark(download([institucional.BENCHMARK]).get(institucional.BENCHMARK))
+    except Exception as e:  # noqa: BLE001
+        print(f"  BOVA11 indisponível ({type(e).__name__}); força relativa não será usada")
+    print("  BOVA11:", "ok" if bench is not None else "indisponível")
+
     # liquidez = média do volume financeiro (Close*Volume) nos últimos LIQ_DAYS pregões
     liq = {}
     for t, df in frames.items():
@@ -298,6 +308,11 @@ def main():
         df = frames[t]
         if len(df) < 60:
             continue
+        try:
+            inst = institucional.analisar(df, bench)   # acumulação / reversão (None se faltar histórico)
+        except Exception as e:  # noqa: BLE001
+            inst = None
+            print(f"  {t}: scanner acumulação/reversão falhou ({type(e).__name__}: {str(e)[:100]})")
         df = add_indicators(df.copy())
         last, prev = df.iloc[-1], df.iloc[-2]
         view = df.tail(BARS)
@@ -307,6 +322,7 @@ def main():
             "div": {k: v for k, v in (("rsi", div_rsi), ("macd", div_macd)) if v},
             "vol": vol_projection(df),
             "fib": fib_levels(df),
+            "inst": inst,
             "ticker": t,
             "rank": rank[t],
             "liq": liq[t],
@@ -334,6 +350,9 @@ def main():
             "c2050": recent_cross(df["SMA20"], df["EMA50"]),      # SMA20 x EMA50
             "divrsi": div_rsi is not None,     # divergência de alta no RSI
             "divmacd": div_macd is not None,   # divergência de alta no MACD
+            # scanner de acumulação/reversão: sinal ('acum' | 'rev' | None) e pontuações
+            "isig": inst["sinal"] if inst else None,
+            "isa": inst["sa"] if inst else None, "isc": inst["sc"] if inst else None,
             "date": df.index[-1].strftime("%Y-%m-%d"),
         })
 
@@ -343,6 +362,7 @@ def main():
                 "price_tol_pct": round(DIV_PRICE_TOL * 100, 2), "rsi_margin": DIV_RSI_MARGIN, "rsi_max": DIV_RSI_MAX},
         "vol": {"window": VOL_WINDOW, "horizon": VOL_HORIZON, "steps": list(VOL_STEPS)},
         "fib": {"lookback": FIB_LOOKBACK, "ret": list(FIB_RET), "ext": list(FIB_EXT)},
+        "inst": {**institucional.config(), "bench_ok": bench is not None},
     }
     meta = {"updated": datetime.now(timezone.utc).isoformat(timespec="minutes"), "count": len(index),
             "cross_days": CROSS_DAYS, "config": config, "items": index}
