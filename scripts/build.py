@@ -123,11 +123,7 @@ def pivot_lows(low, k=DIV_PIVOT):
 
 
 def bullish_divergence(low, ind, ind_max=None, margin=0.0):
-    """Divergência de alta: 2º fundo do preço mais baixo que o 1º, mas o indicador (RSI/MACD) mais alto.
-
-    Devolve dict com datas/valores dos dois fundos, ou None. O 2º fundo precisa ser recente e não pode ter
-    sido rompido depois. `ind_max` exige que o indicador do 1º fundo esteja abaixo desse valor.
-    """
+    """Divergência de alta: 2º fundo do preço mais baixo que o 1º, mas o indicador (RSI/MACD) mais alto."""
     n = len(low)
     lows = low.to_numpy(dtype=float)
     vals = ind.to_numpy(dtype=float)
@@ -135,13 +131,13 @@ def bullish_divergence(low, ind, ind_max=None, margin=0.0):
     if len(piv) < 2:
         return None
 
-    def ind_at(i):  # menor valor do indicador perto do fundo (o fundo do indicador pode ser 1-2 pregões deslocado)
+    def ind_at(i):
         w = vals[max(0, i - 2) : i + 3]
         return None if np.isnan(w).all() else float(np.nanmin(w))
 
     p2 = piv[-1]
     if n - 1 - p2 > DIV_RECENT or lows[p2 + 1 :].min() < lows[p2]:
-        return None  # fundo antigo demais ou já rompido
+        return None
     v2 = ind_at(p2)
     if v2 is None:
         return None
@@ -152,12 +148,12 @@ def bullish_divergence(low, ind, ind_max=None, margin=0.0):
         if gap < DIV_MIN_GAP:
             continue
         if lows[p2] >= lows[p1] * (1 - DIV_PRICE_TOL):
-            continue  # preço não fez fundo mais baixo
+            continue
         if lows[p1 : p2 + 1].min() < lows[p2]:
-            continue  # existe fundo ainda mais baixo no meio
+            continue
         v1 = ind_at(p1)
         if v1 is None or v2 <= v1 + margin:
-            continue  # indicador não fez fundo mais alto
+            continue
         if ind_max is not None and v1 >= ind_max:
             continue
         d = low.index
@@ -169,12 +165,6 @@ def bullish_divergence(low, ind, ind_max=None, margin=0.0):
 
 
 def vol_projection(df):
-    """Cone de volatilidade: preço esperado em ±1σ e ±2σ nos próximos pregões.
-
-    σ = desvio padrão dos retornos logarítmicos diários (últimos VOL_WINDOW pregões). Em h pregões o desvio
-    cresce com a raiz de h. Sem tendência (deriva zero). Teoria: assume retornos ~ normais, então ±1σ cobre ~68%
-    e ±2σ ~95% dos casos; na prática as caudas são mais pesadas e o mercado pode sair do cone.
-    """
     c = df["Close"]
     r = np.log(c / c.shift()).dropna().tail(VOL_WINDOW)
     if len(r) < 20:
@@ -200,7 +190,6 @@ def vol_projection(df):
 
 
 def fib_levels(df):
-    """Retração e extensão de Fibonacci sobre o último grande movimento da janela FIB_LOOKBACK."""
     w = df.tail(FIB_LOOKBACK)
     if len(w) < 30:
         return None
@@ -208,13 +197,13 @@ def fib_levels(df):
     hi_i, lo_i = int(np.nanargmax(highs)), int(np.nanargmin(lows))
     hi, lo = float(highs[hi_i]), float(lows[lo_i])
     rng = hi - lo
-    if hi_i == lo_i or rng <= 0 or rng / hi < 0.03:   # movimento pequeno demais para ser útil
+    if hi_i == lo_i or rng <= 0 or rng / hi < 0.03:
         return None
-    up = lo_i < hi_i                                   # mínima antes da máxima = movimento de alta
-    if up:   # retrações descem a partir da máxima; extensões projetam acima dela
+    up = lo_i < hi_i
+    if up:
         ret = [(r, hi - r * rng) for r in FIB_RET]
         ext = [(e, lo + e * rng) for e in FIB_EXT]
-    else:    # movimento de baixa: retrações sobem a partir da mínima; extensões projetam abaixo dela
+    else:
         ret = [(r, lo + r * rng) for r in FIB_RET]
         ext = [(e, hi - e * rng) for e in FIB_EXT]
     ext = [(e, p) for e, p in ext if p > 0]
@@ -233,7 +222,6 @@ def series(df, col, nd=4):
 
 
 def download(batch):
-    """Baixa um lote; tenta de novo com espera crescente se o Yahoo limitar/recusar."""
     raw = None
     for attempt in range(1, 5):
         try:
@@ -243,9 +231,8 @@ def download(batch):
             )
             if raw is not None and not raw.empty:
                 break
-            print(f"    tentativa {attempt}: resposta vazia")
-        except Exception as e:  # noqa: BLE001
-            print(f"    tentativa {attempt}: {type(e).__name__}: {str(e)[:150]}")
+        except Exception:
+            pass
         time.sleep(10 * attempt)
     if raw is None or raw.empty:
         return {}
@@ -257,29 +244,25 @@ def download(batch):
             if len(sub):
                 res[t] = sub[["Open", "High", "Low", "Close", "Volume"]].copy()
         except (KeyError, TypeError):
-            pass  # ticker inexistente/deslistado
+            pass
     return res
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--limit", type=int, default=0, help="processa só os N primeiros (teste)")
+    ap.add_argument("--limit", type=int, default=0)
     args = ap.parse_args()
 
     tickers = load_tickers()
     if args.limit:
         tickers = tickers[: args.limit]
-    print(f"{len(tickers)} tickers na lista")
 
     frames = {}
     for i in range(0, len(tickers), BATCH):
         b = tickers[i : i + BATCH]
-        print(f"lote {i // BATCH + 1}/{-(-len(tickers) // BATCH)}")
         frames.update(download(b))
-        print(f"  baixados {len(frames)} válidos até agora")
-        time.sleep(3)  # pausa entre lotes para não ser limitado
+        time.sleep(3)
 
-    # liquidez = média do volume financeiro (Close*Volume) nos últimos LIQ_DAYS pregões
     liq = {}
     for t, df in frames.items():
         tail = df.tail(LIQ_DAYS)
@@ -287,7 +270,7 @@ def main():
     ranking = sorted(liq, key=liq.get, reverse=True)
     rank = {t: i + 1 for i, t in enumerate(ranking)}
 
-    if OUT.exists() and not OUT.is_dir():  # "data" foi enviado ao repositório como arquivo
+    if OUT.exists() and not OUT.is_dir():
         OUT.unlink()
     OUT.mkdir(parents=True, exist_ok=True)
     for old in OUT.glob("*.json"):
@@ -302,7 +285,7 @@ def main():
         last, prev = df.iloc[-1], df.iloc[-2]
         view = df.tail(BARS)
         div_rsi = bullish_divergence(df["Low"], df["RSI"], ind_max=DIV_RSI_MAX, margin=DIV_RSI_MARGIN)
-        div_macd = bullish_divergence(df["Low"], df["MACD"], ind_max=0.0)  # MACD do 1º fundo abaixo de zero
+        div_macd = bullish_divergence(df["Low"], df["MACD"], ind_max=0.0)
         payload = {
             "div": {k: v for k, v in (("rsi", div_rsi), ("macd", div_macd)) if v},
             "vol": vol_projection(df),
@@ -329,15 +312,14 @@ def main():
             "close": f(last["Close"]), "chg": f((last["Close"] / prev["Close"] - 1) * 100),
             "rsi": f(last["RSI"]), "macd": f(last["MACD"], 3),
             "above200": bool(last["Close"] > last["EMA200"]) if not pd.isna(last["EMA200"]) else None,
-            # cruzamentos nos últimos CROSS_DAYS pregões: 1 = para cima, -1 = para baixo, 0 = nenhum
-            "cross": recent_cross(df["MA9"], df["SMA20"]),        # MA9 x SMA20
-            "c2050": recent_cross(df["SMA20"], df["EMA50"]),      # SMA20 x EMA50
-            "divrsi": div_rsi is not None,     # divergência de alta no RSI
-            "divmacd": div_macd is not None,   # divergência de alta no MACD
+            "cross": recent_cross(df["MA9"], df["SMA20"]),
+            "c2050": recent_cross(df["SMA20"], df["EMA50"]),
+            "divrsi": div_rsi is not None,
+            "divmacd": div_macd is not None,
             "date": df.index[-1].strftime("%Y-%m-%d"),
         })
 
-    config = {  # parâmetros em uso; o site mostra isso na "Legenda"
+    config = {
         "cross_days": CROSS_DAYS, "liq_days": LIQ_DAYS,
         "div": {"pivot": DIV_PIVOT, "recent": DIV_RECENT, "min_gap": DIV_MIN_GAP, "max_gap": DIV_MAX_GAP,
                 "price_tol_pct": round(DIV_PRICE_TOL * 100, 2), "rsi_margin": DIV_RSI_MARGIN, "rsi_max": DIV_RSI_MAX},
