@@ -54,5 +54,14 @@ No fim de cada gráfico há uma análise (role a página para baixo), disponíve
   O gráfico mostra o cone de ±1σ (amarelo tracejado) e ±2σ (roxo pontilhado) por `VOL_HORIZON` pregões; a tabela mostra 5, 10 e 20 pregões.
 - **Fibonacci:** retrações (23,6 / 38,2 / 50 / 61,8 / 78,6%) e extensões (127,2 / 161,8%) sobre o último grande movimento
   (maior máxima x menor mínima dos últimos `FIB_LOOKBACK` pregões). A tabela diz quais níveis cabem dentro do cone de ±1σ ou ±2σ.
-- As datas futuras do cone são dias úteis; feriados da B3 não são descontados.
+- O cone sai do último candle; as linhas de Fibonacci começam `FIB_START` (5) pregões à frente, no topo de `docs/index.html`, para não poluir o início da análise. As datas futuras são dias úteis; feriados da B3 não são descontados.
 - Parâmetros no topo de `scripts/build.py` (`VOL_*`, `FIB_*`). Teoria estatística, não previsão.
+
+## Acumulação / Reversão (scanner institucional)
+
+O filtro **Acumulação/Reversão** usa o seu scanner V1.0 (`scripts/institucional.py`, mesma lógica de indicadores, pontuações e critérios).
+Mostra os ativos com **possível acumulação** (sinal antecipado, etiqueta `ACUM`) ou **reversão confirmada** (`REV`) nos últimos `DIAS_SINAL` pregões,
+ordenados pelo score (confirmado, depois antecipado). Ao abrir o gráfico, o fim da página traz o status, as duas tabelas de pontuação,
+os indicadores de fluxo (RSI, CMF, MFI, volume relativo, ADX, força relativa vs BOVA11) e o plano de referência (entrada, stop e alvos pelo ATR).
+O BOVA11 é baixado à parte só para a força relativa; se falhar, o scanner segue sem ela.
+Parâmetros no topo de `scripts/institucional.py`. Os sinais são alertas para estudo, não ordens de compra.
