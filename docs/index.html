@@ -81,6 +81,7 @@
       <option value="chg">Variação do dia</option>
       <option value="rsi">RSI (menor)</option>
       <option value="t">A–Z</option>
+      <option value="inst">Score acum./reversão</option>
     </select>
     <button id="info" class="hbtn">ⓘ Legenda</button>
   </div>
@@ -111,7 +112,8 @@ const FILTERS = [
   ['rsiLow','RSI < 35'],['rsiHigh','RSI > 70'],
   ['crossUp','Cruz. MA9↑SMA20 ({d}d)'],['crossDn','Cruz. MA9↓SMA20 ({d}d)'],
   ['c2050Up','Cruz. SMA20↑EMA50 ({d}d)'],['c2050Dn','Cruz. SMA20↓EMA50 ({d}d)'],
-  ['divAny','Diverg. de alta (RSI ou MACD)'],['divRsi','Diverg. de alta RSI'],['divMacd','Diverg. de alta MACD']
+  ['divAny','Diverg. de alta (RSI ou MACD)'],['divRsi','Diverg. de alta RSI'],['divMacd','Diverg. de alta MACD'],
+  ['inst','Acumulação/Reversão']
 ];
 let CD = 3; // janela de cruzamento em pregões (vem do index.json)
 // parâmetros usados no cálculo (vêm do index.json, gerado pelo build.py; estes são só valores iniciais)
@@ -121,7 +123,8 @@ const PRED = {
   rsiLow:x=>x.rsi!=null&&x.rsi<RSI_LOW, rsiHigh:x=>x.rsi!=null&&x.rsi>RSI_HIGH,
   crossUp:x=>x.cross===1, crossDn:x=>x.cross===-1,
   c2050Up:x=>x.c2050===1, c2050Dn:x=>x.c2050===-1,
-  divAny:x=>x.divrsi===true||x.divmacd===true, divRsi:x=>x.divrsi===true, divMacd:x=>x.divmacd===true
+  divAny:x=>x.divrsi===true||x.divmacd===true, divRsi:x=>x.divrsi===true, divMacd:x=>x.divmacd===true,
+  inst:x=>x.isig==='acum'||x.isig==='rev'   // scanner de acumulação/reversão (sinal nos últimos dias)
 };
 
 function fmtMoney(v){ if(v>=1e9) return (v/1e9).toFixed(2)+' bi'; if(v>=1e6) return (v/1e6).toFixed(1)+' mi'; return Math.round(v/1e3)+' mil'; }
@@ -132,12 +135,13 @@ function render(){
   shown.sort((a,b)=> ord==='t' ? a.t.localeCompare(b.t)
     : ord==='rank' ? a.rank-b.rank
     : ord==='chg' ? (b.chg??-1e9)-(a.chg??-1e9)
+    : ord==='inst' ? ((b.isc??-1)-(a.isc??-1)) || ((b.isa??-1)-(a.isa??-1)) || (a.rank-b.rank)   // como no scanner: score confirmado, depois antecipado
     : (a.rsi??1e9)-(b.rsi??1e9));
   $('#list').innerHTML = shown.length ? shown.map((x,i)=>`
     <div class="item" data-i="${i}">
       <div class="rk">#${x.rank}</div>
-      <div><span class="tk">${x.t}</span>${x.cross===1?'<span class="tag up">9↑20</span>':''}${x.cross===-1?'<span class="tag dn">9↓20</span>':''}${x.c2050===1?'<span class="tag up">20↑50</span>':''}${x.c2050===-1?'<span class="tag dn">20↓50</span>':''}${x.divrsi?'<span class="tag up">div RSI</span>':''}${x.divmacd?'<span class="tag up">div MACD</span>':''}
-        <div class="sub">RSI ${x.rsi??'–'} · Liq ${fmtMoney(x.liq)}</div></div>
+      <div><span class="tk">${x.t}</span>${x.cross===1?'<span class="tag up">9↑20</span>':''}${x.cross===-1?'<span class="tag dn">9↓20</span>':''}${x.c2050===1?'<span class="tag up">20↑50</span>':''}${x.c2050===-1?'<span class="tag dn">20↓50</span>':''}${x.divrsi?'<span class="tag up">div RSI</span>':''}${x.divmacd?'<span class="tag up">div MACD</span>':''}${x.isig==='rev'?'<span class="tag up">REV</span>':''}${x.isig==='acum'?'<span class="tag" style="color:#40c4ff;border-color:#40c4ff66">ACUM</span>':''}
+        <div class="sub">RSI ${x.rsi??'–'} · Liq ${fmtMoney(x.liq)}${x.isig?` · Score ${x.isa}/${x.isc}`:''}</div></div>
       <div class="px">R$ ${x.close?.toFixed(2)??'–'}<div class="${x.chg>=0?'up':'dn'}">${x.chg>=0?'+':''}${x.chg??'–'}%</div></div>
     </div>`).join('') : '<div class="empty">Nenhum ativo encontrado</div>';
 }
@@ -149,11 +153,11 @@ function buildChips(){
 async function openTicker(i){
   curIdx = i; const it = shown[i]; if(!it) return;
   $('#view').classList.add('show'); $('#vt').textContent = it.t;
-  $('#vinfo').innerHTML = `<span>Rank <b>#${it.rank}</b></span><span>R$ <b>${it.close}</b></span><span>RSI <b>${it.rsi??'–'}</b></span><span>MACD <b>${it.macd??'–'}</b></span><span>Liq <b>${fmtMoney(it.liq)}</b></span><span>${it.date}</span>${it.divrsi?'<span style="color:#00e676">Diverg. alta RSI</span>':''}${it.divmacd?'<span style="color:#40c4ff">Diverg. alta MACD</span>':''}`;
+  $('#vinfo').innerHTML = `<span>Rank <b>#${it.rank}</b></span><span>R$ <b>${it.close}</b></span><span>RSI <b>${it.rsi??'–'}</b></span><span>MACD <b>${it.macd??'–'}</b></span><span>Liq <b>${fmtMoney(it.liq)}</b></span><span>${it.date}</span>${it.divrsi?'<span style="color:#00e676">Diverg. alta RSI</span>':''}${it.divmacd?'<span style="color:#40c4ff">Diverg. alta MACD</span>':''}${it.isig==='rev'?'<span style="color:#00e676">Reversão confirmada</span>':''}${it.isig==='acum'?'<span style="color:#40c4ff">Possível acumulação</span>':''}`;
   const d = await (await fetch(`data/${it.t}.json`)).json();
   CUR = d; $('#view').scrollTop = 0;
   draw(d);
-  $('#proj').innerHTML = projHtml(d);
+  $('#proj').innerHTML = projHtml(d) + instHtml(d);
   $('#tg-vol').onchange = e => { SHOW_VOL = e.target.checked; draw(CUR); };
   $('#tg-fib').onchange = e => { SHOW_FIB = e.target.checked; draw(CUR); };
 }
@@ -329,11 +333,49 @@ function placeLabels(){
 new ResizeObserver(()=>placeLabels()).observe($('#cwrap'));
 
 $('#list').addEventListener('click',e=>{ const el=e.target.closest('.item'); if(el) openTicker(+el.dataset.i); });
-$('#chips').addEventListener('click',e=>{ const c=e.target.closest('.chip'); if(!c) return; filter=c.dataset.k; buildChips(); render(); });
+$('#chips').addEventListener('click',e=>{ const c=e.target.closest('.chip'); if(!c) return; filter=c.dataset.k;
+  if(filter==='inst') $('#ord').value='inst'; else if($('#ord').value==='inst') $('#ord').value='rank';   // o filtro novo ordena pelo score; os demais seguem como antes
+  buildChips(); render(); });
 $('#q').addEventListener('input',render); $('#ord').addEventListener('change',render);
+// ---- Acumulação / Reversão (scanner institucional): informações compiladas no fim do gráfico ----
+const IC_DEFAULT = {dias_sinal:4, vol_rel_min:1.3, atr_stop:1.5, rr1:2, rr2:3, score_ant_min:50, score_conf_min:65, benchmark:'BOVA11'};
+function instHtml(d){
+  const a = d.inst, ic = {...IC_DEFAULT, ...(CFG.inst||{})};
+  let h = '<h2>Acumulação / Reversão</h2>';
+  if(!a) return h + '<p>Histórico insuficiente (o scanner precisa de cerca de 210 pregões) para analisar este ativo.</p>';
+  const st = a.sinal==='rev' ? ['Reversão confirmada','#00e676'] : a.sinal==='acum' ? ['Possível acumulação','#40c4ff'] : ['Sem sinal','var(--mut)'];
+  h += `<p style="font-size:15px;color:var(--tx)"><b style="color:${st[1]}">${st[0]}</b>${a.data
+    ? ` · sinal em <b>${brDate(a.data)}</b> (há ${a.idade} ${a.idade===1?'dia':'dias'})`
+    : ` · nenhum sinal nos últimos ${ic.dias_sinal} pregões`}</p>`;
+  const sc = (title, total, rows, req) =>
+    `<table class="pt"><tr><th>${title}</th><th>Máx.</th><th>Hoje</th></tr>`
+    + rows.map(([n,p,ok]) => `<tr><td>${n}</td><td>${p}</td><td class="${ok?'z1':'z3'}">${ok?'✓ +'+p:'–'}</td></tr>`).join('')
+    + `<tr class="now"><td>Score total</td><td>100</td><td>${total}</td></tr></table><p>${req}</p>`;
+  h += sc('Acumulação (sinal antecipado)', a.sa, a.ant, `Vira sinal com score ≥ <b>${ic.score_ant_min}</b> e (absorção vendedora ou divergência no RSI).`);
+  h += sc('Reversão (sinal confirmado)', a.sc, a.conf, `Vira sinal com score ≥ <b>${ic.score_conf_min}</b>, rompimento da máxima dos 10 pregões anteriores e fechamento acima da EMA20.`);
+  h += `<p>Os pontos são do último pregão; o sinal vale se ocorreu em um dos últimos ${ic.dias_sinal} pregões.</p>`;
+  const v = (x, f) => x==null ? '–' : f(x);
+  h += `<h2>Indicadores de fluxo</h2><p>RSI <b>${v(a.rsi,x=>x.toFixed(1))}</b> · CMF <b>${v(a.cmf,x=>x.toFixed(3))}</b> · MFI <b>${v(a.mfi,x=>x.toFixed(1))}</b>
+    · Volume relativo <b>${v(a.vrel,x=>x.toFixed(2)+'x')}</b> · ADX <b>${v(a.adx,x=>x.toFixed(1))}</b>
+    · Força relativa 20 pregões vs ${ic.benchmark} <b>${v(a.fr,x=>(x>=0?'+':'')+x.toFixed(1)+' p.p.')}</b></p>`;
+  if(!a.bench) h += `<p style="color:#ffd54f">${ic.benchmark} não foi baixado nesta atualização: a força relativa ficou fora das pontuações.</p>`;
+  h += '<h2>Plano de referência</h2>';
+  if(a.sinal && a.plano){
+    const p = a.plano, e = p.entrada, pc = x => sgn((x/e-1)*100);
+    h += `<table class="pt"><tr><th>Nível</th><th>Preço</th><th>vs entrada</th></tr>
+      <tr class="now"><td>Entrada (último fechamento)</td><td>${f2(e)}</td><td></td></tr>
+      <tr><td>Stop (entrada − ${ic.atr_stop}×ATR)</td><td>${f2(p.stop)}</td><td class="dn">${pc(p.stop)}</td></tr>
+      <tr><td>Alvo 1 (${ic.rr1}× o risco)</td><td>${f2(p.alvo1)}</td><td class="up">${pc(p.alvo1)}</td></tr>
+      <tr><td>Alvo 2 (${ic.rr2}× o risco)</td><td>${f2(p.alvo2)}</td><td class="up">${pc(p.alvo2)}</td></tr></table>`;
+  } else h += '<p>O plano (entrada, stop e alvos) aparece quando o ativo tem sinal.</p>';
+  h += '<p style="font-size:12px">Os sinais são alertas para estudo, não ordens de compra. O plano é só uma referência baseada no ATR.</p>';
+  return h;
+}
+
 // ---- legenda dos filtros (descrição + configuração atual) ----
 function legendHtml(){
   const c = CFG, dv = c.div || {}, cd = c.cross_days;
+  const ic = {...IC_DEFAULT, ...(c.inst||{})};
   const vl = c.vol || {window:60,horizon:20,steps:[5,10,20]}, fb = c.fib || {lookback:120,ret:[0.236,0.382,0.5,0.618,0.786],ext:[1.272,1.618]};
   const cross = `Janela: ${cd} ${cd===1?'pregão':'pregões'} (conta o cruzamento mais recente dentro da janela)`;
   const divCfg = extra => `Fundos: mínima mais baixa entre ${dv.pivot} pregões antes e ${dv.pivot} depois (confirmação com ${dv.pivot} pregões de atraso) · `
@@ -360,6 +402,20 @@ function legendHtml(){
       ['Diverg. de alta (RSI ou MACD)','O preço faz um fundo mais baixo, mas o RSI ou o MACD faz um fundo mais alto: a queda está perdendo força. No gráfico, uma linha tracejada liga os dois fundos no preço e no indicador.','Basta uma das duas divergências (regras abaixo)'],
       ['Diverg. de alta RSI','Divergência entre o preço e o RSI (linha verde no gráfico).',divCfg(rsiCfg)],
       ['Diverg. de alta MACD','Divergência entre o preço e o MACD (linha azul clara no gráfico).',divCfg(macdCfg)],
+    ]],
+    ['Acumulação / Reversão (scanner institucional)', [
+      ['Acumulação/Reversão',
+       'Mostra os ativos com algum sinal do scanner nos últimos pregões: possível acumulação (sinal antecipado) ou reversão confirmada. A lista fica ordenada pelo score, como no scanner. Na lista aparecem as etiquetas ACUM e REV e o score (antecipado/confirmado); ao abrir o gráfico, a análise completa fica no fim da página.',
+       `O sinal vale se ocorreu nos últimos ${ic.dias_sinal} pregões · força relativa contra ${ic.benchmark}${ic.bench_ok===false?' (indisponível nesta atualização)':''}`],
+      ['Possível acumulação (ACUM)',
+       `Compradores absorvendo a venda antes da virada. Score antecipado (máx. 100): absorção vendedora 20, divergência positiva no RSI 20, CMF > 0 15, OBV acima da média 10, MFI subindo 10, enfraquecimento vendedor 10, força relativa > ${ic.benchmark} 15. Absorção = volume relativo alto, fechamento na parte alta do candle e CMF > 0. Divergência = preço na mínima de 20 dias (até 1,5% acima) e RSI pelo menos 3 pontos acima da mínima anterior.`,
+       `Sinal: score ≥ ${ic.score_ant_min} e (absorção ou divergência) · volume relativo mínimo ${ic.vol_rel_min}x`],
+      ['Reversão confirmada (REV)',
+       'A virada já apareceu no preço. Score confirmado (máx. 100): fechamento acima da EMA20 20, EMA20 acima da EMA50 15, histograma do MACD > 0 15, CMF > 0 10, volume relativo > 1,2x 10, +DI acima de −DI 10, rompimento da máxima de 10 pregões 15, força relativa > BOVA11 5. Quando há os dois sinais, vale a reversão confirmada.',
+       `Sinal: score ≥ ${ic.score_conf_min}, rompimento da máxima dos 10 pregões anteriores e fechamento acima da EMA20`],
+      ['Plano de referência',
+       'Calculado só para ativos com sinal: entrada no último fechamento, stop abaixo da entrada em múltiplos do ATR de 14 dias e dois alvos em múltiplos do risco. É referência de estudo, não ordem.',
+       `Stop = entrada − ${ic.atr_stop}×ATR · alvo 1 = ${ic.rr1}× o risco · alvo 2 = ${ic.rr2}× o risco`],
     ]],
     ['Análise no fim de cada gráfico (vale para todos os ativos)', [
       ['Projeção de volatilidade (±1σ e ±2σ)',
