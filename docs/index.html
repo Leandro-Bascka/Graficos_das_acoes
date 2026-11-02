@@ -105,7 +105,7 @@ const $ = s => document.querySelector(s);
 let ITEMS = [], shown = [], filter = 'all', chart = null, curIdx = -1;
 
 const TOP_N = 50, RSI_LOW = 35, RSI_HIGH = 70;
-const FIB_START = 5;
+const FIB_START = 5;   // as linhas de Fibonacci começam N pregões à frente do último candle
 const FILTERS = [
   ['all','Todos'],['top50','Top 50 liquidez'],
   ['rsiLow','RSI < 35'],['rsiHigh','RSI > 70'],
@@ -113,7 +113,8 @@ const FILTERS = [
   ['c2050Up','Cruz. SMA20↑EMA50 ({d}d)'],['c2050Dn','Cruz. SMA20↓EMA50 ({d}d)'],
   ['divAny','Diverg. de alta (RSI ou MACD)'],['divRsi','Diverg. de alta RSI'],['divMacd','Diverg. de alta MACD']
 ];
-let CD = 3;
+let CD = 3; // janela de cruzamento em pregões (vem do index.json)
+// parâmetros usados no cálculo (vêm do index.json, gerado pelo build.py; estes são só valores iniciais)
 let CFG = {cross_days:3, liq_days:60, div:{pivot:3,recent:10,min_gap:5,max_gap:60,price_tol_pct:0.3,rsi_margin:1,rsi_max:45}};
 const PRED = {
   all:()=>true, top50:x=>x.rank<=TOP_N,
@@ -157,12 +158,14 @@ async function openTicker(i){
   $('#tg-fib').onchange = e => { SHOW_FIB = e.target.checked; draw(CUR); };
 }
 
+// próximos n dias úteis depois de uma data 'AAAA-MM-DD' (usado só se não houver projeção de volatilidade)
 function futureDates(last, n){
   const out = [], dt = new Date(last + 'T00:00:00Z');
   while(out.length < n){ dt.setUTCDate(dt.getUTCDate()+1); const w = dt.getUTCDay(); if(w!==0 && w!==6) out.push(dt.toISOString().slice(0,10)); }
   return out;
 }
 
+// ---- análise: volatilidade histórica projetada + Fibonacci ----
 let CUR = null, SHOW_VOL = true, SHOW_FIB = true;
 const f2 = v => v==null ? '–' : v.toFixed(2);
 const sgn = v => (v>=0?'+':'') + v.toFixed(1) + '%';
@@ -177,13 +180,17 @@ function projHtml(d){
     h += `<p>Desvio padrão diário dos retornos: <b>${(V.sigma*100).toFixed(2)}%</b> (${V.n} pregões) · anualizado: <b>${(V.ann*100).toFixed(1)}%</b> · último preço <b>R$ ${f2(V.last)}</b>.</p>
       <table class="pt"><tr><th>Em</th><th>−2σ</th><th>−1σ</th><th>+1σ</th><th>+2σ</th></tr>
       ${V.steps.map(s=>`<tr><td>${s.n} pregões</td><td>${cell(s.l2)}</td><td>${cell(s.l1)}</td><td>${cell(s.u1)}</td><td>${cell(s.u2)}</td></tr>`).join('')}</table>
-      <p>Na teoria, o preço ficaria dentro de ±1σ em ~68% dos casos e dentro de ±2σ em ~95%.</p>`;
+      <p>Na teoria (retornos normais, sem tendência), o preço ficaria dentro de ±1σ em ~68% dos casos e dentro de ±2σ em ~95%. No gráfico, as linhas tracejadas amarelas são ±1σ e as pontilhadas roxas, ±2σ.</p>`;
   } else h += '<p>Dados insuficientes para calcular a volatilidade.</p>';
 
   h += '<h2>Fibonacci</h2>';
   if(F){
     const up = F.dir === 'alta';
-    h += `<p>Último grande movimento de <b>${F.dir}</b>: ${up ? `mínima <b>R$ ${f2(F.lo)}</b> → máxima <b>R$ ${f2(F.hi)}</b>` : `máxima <b>R$ ${f2(F.hi)}</b> → mínima <b>R$ ${f2(F.lo)}</b>`}.</p>`;
+    h += `<p>Último grande movimento de <b>${F.dir}</b> (janela de ${CFG.fib?.lookback ?? 120} pregões): ${up
+      ? `mínima <b>R$ ${f2(F.lo)}</b> (${brDate(F.d_lo)}) → máxima <b>R$ ${f2(F.hi)}</b> (${brDate(F.d_hi)})`
+      : `máxima <b>R$ ${f2(F.hi)}</b> (${brDate(F.d_hi)}) → mínima <b>R$ ${f2(F.lo)}</b> (${brDate(F.d_lo)})`}.
+      ${up ? 'As retrações indicam até onde uma correção pode chegar; as extensões, alvos se a alta continuar.'
+           : 'As retrações indicam até onde um repique pode chegar; as extensões, alvos se a queda continuar.'}</p>`;
     const pct = v => (v*100).toFixed(v*100 % 1 ? 1 : 0);
     const rows = [
       ...F.ret.map(([r,p]) => ({n:`Retração ${pct(r)}%`, p})),
@@ -199,7 +206,13 @@ function projHtml(d){
     h += `<table class="pt"><tr><th>Nível</th><th>Preço</th><th>Dist.</th><th>Em ${H} pregões</th></tr>
       ${rows.map(r=>{ const [z,zc] = reach(r.p);
         return `<tr class="${r.now?'now':''} ${r.sw?'sw':''}"><td>${r.n}</td><td>${f2(r.p)}</td><td>${r.now?'':sgn((r.p/last-1)*100)}</td><td class="${zc}">${r.now?'':z}</td></tr>`; }).join('')}</table>`;
+    const conf = [...F.ret.map(([r,p])=>[`Retr. ${pct(r)}%`,p]), ...F.ext.map(([e,p])=>[`Ext. ${pct(e)}%`,p])]
+      .filter(([,p]) => V && Math.abs(Math.log(p/last)) / (V.sigma*Math.sqrt(H)) <= 1);
+    h += V ? (conf.length
+      ? `<p><b>Em conjunto:</b> níveis de Fibonacci dentro do cone de ±1σ em ${H} pregões, ou seja, alcançáveis sem um movimento fora do comum: <b>${conf.map(([n,p])=>`${n} (R$ ${f2(p)})`).join(' · ')}</b>.</p>`
+      : `<p><b>Em conjunto:</b> nenhum nível de Fibonacci cai dentro do cone de ±1σ em ${H} pregões; alcançar qualquer um exigiria um movimento acima do típico.</p>`) : '';
   } else h += '<p>Sem movimento relevante na janela para traçar níveis de Fibonacci.</p>';
+  h += '<p style="margin-top:14px;font-size:12px">Projeções estatísticas teóricas calculadas a partir do passado; não são previsão nem recomendação de compra ou venda. Mercados saem do cone com frequência, principalmente em eventos e notícias.</p>';
   return h;
 }
 
@@ -212,12 +225,15 @@ function draw(d){
     grid:{vertLines:{color:'#1a222c'},horzLines:{color:'#1a222c'}},
     rightPriceScale:{borderColor:'#2a3441'}, timeScale:{borderColor:'#2a3441',rightOffset:3},
     crosshair:{mode:L.CrosshairMode.Normal},
-    handleScroll:{vertTouchDrag:false}
+    handleScroll:{vertTouchDrag:false}   // arrastar na vertical rola a página (até a análise), não o gráfico
   });
   const line = (arr,color,pane,opts={}) => {
     const s = chart.addSeries(L.LineSeries,{color,lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false,...opts},pane);
     s.setData(d.t.map((t,i)=>arr[i]==null?{time:t}:{time:t,value:arr[i]})); return s;
   };
+  // pane 0: preço
+  // preenchimento da banda de Bollinger (azul ~80% transparente): área sob a banda superior em azul,
+  // coberta por uma área na cor do fundo sob a banda inferior. Vêm antes dos candles para ficar atrás.
   const band = (arr,top,bottom) => {
     const s = chart.addSeries(L.AreaSeries,{lineVisible:false,topColor:top,bottomColor:bottom,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false},0);
     s.setData(d.t.map((t,i)=>arr[i]==null?{time:t}:{time:t,value:arr[i]}));
@@ -228,24 +244,24 @@ function draw(d){
   cs.setData(d.t.map((t,i)=>({time:t,open:d.o[i],high:d.h[i],low:d.l[i],close:d.c[i]})));
   line(d.ma9,'#4da3ff',0); line(d.ema50,'#ffa726',0); line(d.ema200,'#e6edf3',0);
   line(d.sma20,'#f06292',0); line(d.bbu,'#5b6773',0,{lineStyle:2}); line(d.bbl,'#5b6773',0,{lineStyle:2});
-  
+  // pane 1: volume
   const vs = chart.addSeries(L.HistogramSeries,{priceFormat:{type:'volume'},priceLineVisible:false,lastValueVisible:false},1);
   vs.setData(d.t.map((t,i)=>({time:t,value:d.v[i],color:i>0&&d.c[i]>=d.c[i-1]?'#26a69a99':'#ef535099'})));
-  
+  // pane 2: MACD
   const hs = chart.addSeries(L.HistogramSeries,{priceLineVisible:false,lastValueVisible:false},2);
   hs.setData(d.t.map((t,i)=>d.hist[i]==null?{time:t}:{time:t,value:d.hist[i],color:d.hist[i]>=0?'#26a69a99':'#ef535099'}));
   line(d.macd,'#4da3ff',2); line(d.sig,'#ffa726',2);
-  
+  // pane 3: RSI
   const rs = line(d.rsi,'#b388ff',3,{lastValueVisible:true});
   rs.createPriceLine({price:70,color:'#26a69a',lineStyle:2,lineWidth:1,axisLabelVisible:false});
   rs.createPriceLine({price:30,color:'#ef5350',lineStyle:2,lineWidth:1,axisLabelVisible:false});
-  
+  // pane 4: Estocástico lento
   const k = line(d.stk,'#4da3ff',4); line(d.std,'#ef5350',4);
   k.createPriceLine({price:80,color:'#26a69a',lineStyle:2,lineWidth:1,axisLabelVisible:false});
   k.createPriceLine({price:20,color:'#ef5350',lineStyle:2,lineWidth:1,axisLabelVisible:false});
-  
+  // pane 5: ATR
   line(d.atr,'#4da3ff',5,{lastValueVisible:true});
-
+  // divergências de alta: liga os dois fundos no preço e no indicador (verde = RSI, azul claro = MACD)
   const seg = (pts,color,pane) => {
     const s = chart.addSeries(L.LineSeries,{color,lineWidth:2,lineStyle:2,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false},pane);
     s.setData(pts);
@@ -256,7 +272,7 @@ function draw(d){
     seg([{time:v.d1,value:v.p1},{time:v.d2,value:v.p2}],col,0);
     seg([{time:v.d1,value:v.v1},{time:v.d2,value:v.v2}],col,pane);
   });
-
+  // projeção de volatilidade: cone de ±1σ (amarelo tracejado) e ±2σ (roxo pontilhado) a partir do último fechamento
   const V = d.vol, F = d.fib; let ahead = 0, extra = '';
   if(SHOW_VOL && V){
     const lastT = d.t[d.t.length-1];
@@ -268,11 +284,13 @@ function draw(d){
     ahead = V.dates.length;
     extra += '<span><i style="border-color:#ffd54f;border-top-style:dashed"></i>±1σ</span><span><i style="border-color:#ab47bc;border-top-style:dotted"></i>±2σ</span>';
   }
+  // Fibonacci: retrações (laranja) e extensões (verde-água) do último grande movimento.
+  // Desenhadas só da última data para frente (como o cone), e sem influenciar a escala de preços.
   if(SHOW_FIB && F){
     const lastT = d.t[d.t.length-1];
     const fut = (V && V.dates.length) ? V.dates : futureDates(lastT, 20);
     const endT = fut[fut.length-1]; ahead = Math.max(ahead, fut.length);
-    const startT = fut[Math.min(FIB_START, fut.length) - 1];
+    const startT = fut[Math.min(FIB_START, fut.length) - 1];   // as linhas só começam FIB_START pregões à frente (o cone continua no último candle)
     const fl = (price,color,title) => {
       const s = chart.addSeries(L.LineSeries,{color,lineWidth:1,lineStyle:2,priceLineVisible:false,lastValueVisible:true,crosshairMarkerVisible:false,title,autoscaleInfoProvider:()=>null},0);
       s.setData([{time:startT,value:price},{time:endT,value:price}]);
@@ -282,14 +300,21 @@ function draw(d){
     extra += '<span><i style="border-color:#ffb74d;border-top-style:dashed"></i>Fib retr.</span><span><i style="border-color:#80cbc4;border-top-style:dashed"></i>Fib ext.</span>';
   }
   $('#plextra').innerHTML = extra;
+  // proporções dos painéis
   const ps = chart.panes(); const f=[8,1.2,1.5,1.5,1.5,1.2];
   ps.forEach((p,i)=>p.setStretchFactor?.(f[i]));
-  const lab = SHOW_FIB && F;
+  const lab = SHOW_FIB && F;   // com Fibonacci ligado, deixa folga à direita: os rótulos ficam no fim das linhas, sem cobrir o cone
   chart.timeScale().setVisibleLogicalRange({from:d.t.length-(lab?78:90),to:d.t.length+ahead+(lab?16:3)});
   setTimeout(placeLabels,80);
 }
 
-const PLABELS = [null, 'Volume', 'MACD', 'RSI (14)', 'Estocástico lento', 'ATR (14)'];
+// legenda de cada indicador, no canto inferior direito do respectivo painel
+const PLABELS = [null,
+  'Volume',
+  '<span style="color:#4da3ff">MACD (12,26,9)</span> · <span style="color:#ffa726">Sinal</span> · Histograma',
+  '<span style="color:#b388ff">RSI (14)</span>',
+  'Estocástico lento · <span style="color:#4da3ff">%K (5)</span> · <span style="color:#ef5350">%D (3)</span>',
+  '<span style="color:#4da3ff">ATR (14)</span>'];
 function placeLabels(){
   const box = $('#plabels'); if(!chart || !box) return;
   let w = 60; try{ w = chart.priceScale('right').width() || 60; }catch(e){}
@@ -306,9 +331,47 @@ new ResizeObserver(()=>placeLabels()).observe($('#cwrap'));
 $('#list').addEventListener('click',e=>{ const el=e.target.closest('.item'); if(el) openTicker(+el.dataset.i); });
 $('#chips').addEventListener('click',e=>{ const c=e.target.closest('.chip'); if(!c) return; filter=c.dataset.k; buildChips(); render(); });
 $('#q').addEventListener('input',render); $('#ord').addEventListener('change',render);
-
+// ---- legenda dos filtros (descrição + configuração atual) ----
 function legendHtml(){
-  return '<h3>Filtros de Divergência de Alta</h3><div class="li"><b>Diverg. de alta (RSI ou MACD)</b><p>Preço faz fundo mais baixo, mas o indicador faz fundo mais alto.</p></div>';
+  const c = CFG, dv = c.div || {}, cd = c.cross_days;
+  const vl = c.vol || {window:60,horizon:20,steps:[5,10,20]}, fb = c.fib || {lookback:120,ret:[0.236,0.382,0.5,0.618,0.786],ext:[1.272,1.618]};
+  const cross = `Janela: ${cd} ${cd===1?'pregão':'pregões'} (conta o cruzamento mais recente dentro da janela)`;
+  const divCfg = extra => `Fundos: mínima mais baixa entre ${dv.pivot} pregões antes e ${dv.pivot} depois (confirmação com ${dv.pivot} pregões de atraso) · `
+    + `2º fundo nos últimos ${dv.recent} pregões e ainda não rompido · distância entre os fundos: ${dv.min_gap} a ${dv.max_gap} pregões · `
+    + `2º fundo pelo menos ${dv.price_tol_pct}% abaixo do 1º · ${extra}`;
+  const rsiCfg = `RSI do 2º fundo pelo menos ${dv.rsi_margin} ponto acima do 1º · RSI do 1º fundo abaixo de ${dv.rsi_max}`;
+  const macdCfg = 'MACD (12,26,9) do 2º fundo acima do 1º · MACD do 1º fundo abaixo de zero';
+  const groups = [
+    ['Liquidez e ordenação', [
+      ['Todos','Mostra todos os ativos, sem filtro.','—'],
+      [`Top ${TOP_N} liquidez`,`Os ${TOP_N} ativos com maior volume financeiro médio (preço de fechamento × volume).`,`Top ${TOP_N} · média dos últimos ${c.liq_days} pregões`],
+    ]],
+    ['RSI', [
+      [`RSI < ${RSI_LOW}`,'RSI de 14 períodos (suavização de Wilder) abaixo do limite: sobrevenda, o papel caiu bastante.',`Limite: ${RSI_LOW}`],
+      [`RSI > ${RSI_HIGH}`,'RSI de 14 períodos acima do limite: sobrecompra, o papel subiu bastante.',`Limite: ${RSI_HIGH}`],
+    ]],
+    ['Médias móveis', [
+      ['Cruz. MA9↑SMA20','A MA9 cruzou a SMA20 de baixo para cima. Aparece na lista como 9↑20.',cross],
+      ['Cruz. MA9↓SMA20','A MA9 cruzou a SMA20 de cima para baixo. Aparece como 9↓20.',cross],
+      ['Cruz. SMA20↑EMA50','A média simples de 20 dias cruzou a média exponencial de 50 dias de baixo para cima. Aparece como 20↑50.',cross],
+      ['Cruz. SMA20↓EMA50','A média simples de 20 dias cruzou a média exponencial de 50 dias de cima para baixo. Aparece como 20↓50.',cross],
+    ]],
+    ['Divergência de alta', [
+      ['Diverg. de alta (RSI ou MACD)','O preço faz um fundo mais baixo, mas o RSI ou o MACD faz um fundo mais alto: a queda está perdendo força. No gráfico, uma linha tracejada liga os dois fundos no preço e no indicador.','Basta uma das duas divergências (regras abaixo)'],
+      ['Diverg. de alta RSI','Divergência entre o preço e o RSI (linha verde no gráfico).',divCfg(rsiCfg)],
+      ['Diverg. de alta MACD','Divergência entre o preço e o MACD (linha azul clara no gráfico).',divCfg(macdCfg)],
+    ]],
+    ['Análise no fim de cada gráfico (vale para todos os ativos)', [
+      ['Projeção de volatilidade (±1σ e ±2σ)',
+       'Desvio padrão dos retornos diários do papel, projetado para frente com a raiz do tempo e sem tendência. Em teoria, ±1σ cobre ~68% dos casos e ±2σ ~95%. No gráfico: linhas amarelas tracejadas (±1σ) e roxas pontilhadas (±2σ) à direita do último candle; abaixo do gráfico, a tabela de preços em 5, 10 e 20 pregões.',
+       `Volatilidade medida nos últimos ${vl.window} pregões · projeção de ${vl.horizon} pregões · tabela em ${vl.steps.join(', ')} pregões`],
+      ['Fibonacci (retração e extensão)',
+       `Acha a maior máxima e a menor mínima da janela e usa o movimento entre elas. Retrações (laranja) mostram até onde uma correção ou repique pode ir; extensões (verde-água), alvos se o movimento continuar. No gráfico, as linhas começam ${FIB_START} pregões à frente do último candle (o cone de volatilidade começa no último candle), sem poluir o histórico nem o início da análise. A tabela mostra a distância de cada nível ao preço e se ele cabe dentro do cone de ±1σ ou ±2σ.`,
+       `Janela de ${fb.lookback} pregões · retrações: ${fb.ret.map(x=>(x*100).toFixed(x*100%1?1:0)+'%').join(', ')} · extensões: ${fb.ext.map(x=>(x*100).toFixed(1)+'%').join(', ')}`],
+    ]],
+  ];
+  return groups.map(([g,items])=>`<h3>${g}</h3>`+items.map(([t,d,s])=>`<div class="li"><b>${t}</b><p>${d}</p><small>${s}</small></div>`).join('')).join('')
+    + '<h3>Observação</h3><div class="li"><p>Estes filtros são informação técnica calculada com dados diários do Yahoo Finance, não recomendação de compra ou venda. Os parâmetros ficam no topo do arquivo scripts/build.py.</p></div>';
 }
 function toggleLegend(on){ if(on) $('#mbody').innerHTML = legendHtml(); $('#modal').classList.toggle('show',on); }
 $('#info').onclick=()=>toggleLegend(true);
