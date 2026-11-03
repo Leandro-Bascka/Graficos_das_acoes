@@ -305,11 +305,22 @@ function draw(d){
   }
   $('#plextra').innerHTML = extra;
   // proporções dos painéis
-  const ps = chart.panes(); const f=[8,1.2,1.5,1.5,1.5,1.2];
-  ps.forEach((p,i)=>p.setStretchFactor?.(f[i]));
+  layoutPanes();
   const lab = SHOW_FIB && F;   // com Fibonacci ligado, deixa folga à direita: os rótulos ficam no fim das linhas, sem cobrir o cone
   chart.timeScale().setVisibleLogicalRange({from:d.t.length-(lab?78:90),to:d.t.length+ahead+(lab?16:3)});
-  setTimeout(placeLabels,80);
+  setTimeout(()=>{ layoutPanes(); placeLabels(); },80);
+}
+
+// Altura (em pixels) dos painéis de indicadores, de cima para baixo: Volume, MACD, RSI, Estocástico, ATR.
+// Quanto menores, mais espaço sobra para os candles: o painel de preço fica com todo o resto da altura.
+const PANE_H = [48, 56, 56, 56, 44];
+function layoutPanes(){
+  if(!chart) return;
+  const ps = chart.panes(), total = $('#cwrap').clientHeight;
+  if(ps.length < 2 || !total) return;
+  const small = PANE_H.slice(0, ps.length-1);
+  const price = Math.max(200, total - 30 - small.reduce((a,b)=>a+b,0) - ps.length);   // 30 = eixo de datas; 1px por divisória
+  try{ ps[0].setHeight(price); small.forEach((h,i) => ps[i+1].setHeight(h)); }catch(e){}
 }
 
 // legenda de cada indicador, no canto inferior direito do respectivo painel
@@ -330,7 +341,7 @@ function placeLabels(){
   });
   box.innerHTML = html;
 }
-new ResizeObserver(()=>placeLabels()).observe($('#cwrap'));
+new ResizeObserver(()=>{ layoutPanes(); placeLabels(); }).observe($('#cwrap'));
 
 $('#list').addEventListener('click',e=>{ const el=e.target.closest('.item'); if(el) openTicker(+el.dataset.i); });
 $('#chips').addEventListener('click',e=>{ const c=e.target.closest('.chip'); if(!c) return; filter=c.dataset.k;
