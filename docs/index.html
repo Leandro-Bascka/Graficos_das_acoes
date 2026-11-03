@@ -313,7 +313,7 @@ function draw(d){
 
 // Altura (em pixels) dos painéis de indicadores, de cima para baixo: Volume, MACD, RSI, Estocástico, ATR.
 // Quanto menores, mais espaço sobra para os candles: o painel de preço fica com todo o resto da altura.
-const PANE_H = [48, 56, 56, 56, 44];
+const PANE_H = [72, 76, 76, 76, 60];
 function layoutPanes(){
   if(!chart) return;
   const ps = chart.panes(), total = $('#cwrap').clientHeight;
