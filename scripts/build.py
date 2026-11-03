@@ -18,8 +18,8 @@ import institucional  # scanner de acumulação / reversão (scripts/institucion
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT = ROOT / "docs" / "data"
-BARS = 300          # candles exibidos no gráfico
-HISTORY = "2y"      # histórico baixado (EMA200 precisa de aquecimento)
+BARS = 500          # candles exibidos no gráfico
+HISTORY = "3y"      # histórico baixado (EMA200 precisa de aquecimento)
 LIQ_DAYS = 60       # janela da liquidez (pregões, ~3 meses). Ajuste se quiser
 BATCH = 25          # tickers por requisição
 CROSS_DAYS = 3      # um cruzamento de médias vale se ocorreu nos últimos N pregões (1 = só no último)
